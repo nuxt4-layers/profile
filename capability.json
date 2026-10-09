@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1",
   "name": "@nuxt4-layers/profile",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "classification": "foundation",
   "provides": [
     {
@@ -15,6 +15,12 @@
       "contractVersion": "1",
       "optional": false,
       "purpose": "the identifiers records are keyed by, its lifecycle events, and the disclosure-context port, adapted by the host; there is no package dependency"
+    },
+    {
+      "capability": "Authentication",
+      "contractVersion": "1",
+      "optional": false,
+      "purpose": "the signed-in principal for each /api/profile request, through the host's subject resolver; there is no package dependency"
     }
   ],
   "publicExports": [
@@ -33,6 +39,10 @@
     },
     {
       "port": "ProfileDisclosureContext",
+      "optional": false
+    },
+    {
+      "port": "ProfileSubjectResolver",
       "optional": false
     }
   ],

@@ -7,7 +7,10 @@
 export const PROFILE_ERROR_CODES = [
   'unauthenticated',
   'forbidden',
+  'insufficient-assurance',
   'validation-failed',
+  'conflict',
+  'rate-limited',
   'unavailable',
 ] as const
 
@@ -17,8 +20,23 @@ export type ProfileErrorCode = typeof PROFILE_ERROR_CODES[number]
 export const PROFILE_ERROR_STATUS: Readonly<Record<ProfileErrorCode, number>> = {
   'unauthenticated': 401,
   'forbidden': 403,
+  'insufficient-assurance': 403,
   'validation-failed': 400,
+  'conflict': 409,
+  'rate-limited': 429,
   'unavailable': 503,
+}
+
+/**
+ * JSON body of an error from `/api/profile/*`. `reason` is a code, given
+ * only for `validation-failed` (the problem, e.g. `invalid-email`) and
+ * `conflict` (`version-changed`): never a value, and never for `forbidden`.
+ */
+export interface ProfileErrorBody {
+  code: ProfileErrorCode
+  /** Localisation key for the user-facing message, e.g. `profile.error.forbidden`. */
+  messageKey: string
+  reason?: string
 }
 
 export function isProfileErrorCode(value: unknown): value is ProfileErrorCode {

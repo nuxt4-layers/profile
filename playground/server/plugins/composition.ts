@@ -9,6 +9,8 @@ export default defineNitroPlugin(() => {
     keys: { 'dev-1': Buffer.alloc(32, 7).toString('base64') },
     current: 'dev-1',
   }))
+  // No sign-in in the playground: every `/api/profile/*` request is unauthenticated.
+  provideProfileSubjectResolver({ resolve: async () => null })
   provideProfileDisclosureContext({
     async describe(request) {
       return {

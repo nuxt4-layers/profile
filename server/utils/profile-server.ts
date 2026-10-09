@@ -39,19 +39,24 @@ export async function getOwnProfile(input: { subjectId: string }): Promise<OwnPr
   return (await service()).own(input)
 }
 
-/** The person changes their own attributes (a value sets, `null` removes). */
-export async function updateProfile(input: { subjectId: string, changes: unknown, correlationId: string }): Promise<OwnProfile> {
+/** The person changes their own attributes (a value sets, `null` removes). With `expectedVersion`, refuses (`conflict`) if the record changed since. */
+export async function updateProfile(input: { subjectId: string, changes: unknown, correlationId: string, expectedVersion?: number }): Promise<OwnProfile> {
   return (await service()).update(input)
 }
 
 /** The person sets each attribute's audience, the name others see, and their departure choice. */
-export async function setProfileDisclosure(input: { subjectId: string, settings: unknown, correlationId: string }): Promise<OwnProfile> {
+export async function setProfileDisclosure(input: { subjectId: string, settings: unknown, correlationId: string, expectedVersion?: number }): Promise<OwnProfile> {
   return (await service()).setDisclosure(input)
 }
 
 /** The person chooses to be shown as "Former member" in a group they left. */
 export async function anonymiseProfileDeparture(input: { subjectId: string, groupId: string, correlationId: string }): Promise<void> {
   return (await service()).anonymiseDeparture(input)
+}
+
+/** Counts one lookup by the viewer against the rate limit; `rate-limited` once it is spent. */
+export async function consumeProfileLookup(input: { viewerId: string }): Promise<void> {
+  return (await service()).consumeLookup(input)
 }
 
 /** Display names for up to 200 people as the viewer may see them, for attribution or a listing. */

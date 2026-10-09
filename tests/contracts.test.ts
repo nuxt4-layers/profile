@@ -58,8 +58,27 @@ describe('Profile public contract', () => {
   })
 
   it('keeps errors coarse', () => {
-    expect(contracts.PROFILE_ERROR_CODES).toEqual(['unauthenticated', 'forbidden', 'validation-failed', 'unavailable'])
+    expect(contracts.PROFILE_ERROR_CODES).toEqual(['unauthenticated', 'forbidden', 'insufficient-assurance', 'validation-failed', 'conflict', 'rate-limited', 'unavailable'])
+    expect(contracts.PROFILE_ERROR_STATUS).toMatchObject({ 'forbidden': 403, 'insufficient-assurance': 403, 'conflict': 409, 'rate-limited': 429 })
     expect(new contracts.ProfileFailure('forbidden').code).toBe('forbidden')
+  })
+})
+
+describe('HTTP contract', () => {
+  it('needs a recent sign-in for contact details and export, and takes the subject only from the resolver', () => {
+    expect(contracts.PROFILE_STEP_UP_SECONDS).toBe(900)
+    expect(contracts.STEP_UP_ATTRIBUTES).toEqual(['email', 'phone_number'])
+    const body = { expectedVersion: 1, changes: { name: 'Ada' } }
+    expect(contracts.updateProfileRequestSchema.safeParse(body).success).toBe(true)
+    expect(contracts.updateProfileRequestSchema.safeParse({ ...body, subjectId: '01928c4e-0000-7000-8000-000000000001' }).success).toBe(false)
+    expect(contracts.updateProfileRequestSchema.safeParse({ changes: body.changes }).success).toBe(false)
+  })
+
+  it('limits display-name lookups to 200 people a request', () => {
+    const ids = (n: number) => Array.from({ length: n }, (_, i) => `01928c4e-0000-7000-8000-${String(i).padStart(12, '0')}`)
+    expect(contracts.displayNamesRequestSchema.safeParse({ subjectIds: ids(200), purpose: 'listing' }).success).toBe(true)
+    expect(contracts.displayNamesRequestSchema.safeParse({ subjectIds: ids(201), purpose: 'listing' }).success).toBe(false)
+    expect(contracts.displayNamesRequestSchema.safeParse({ subjectIds: ids(1), purpose: 'everything' }).success).toBe(false)
   })
 })
 

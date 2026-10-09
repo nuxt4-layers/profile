@@ -1,4 +1,4 @@
-import type { ProfileDatabase, ProfileDisclosureContextPort, ProfileKeyWrapper } from '../../contracts'
+import type { ProfileDatabase, ProfileDisclosureContextPort, ProfileKeyWrapper, ProfileSubjectResolver } from '../../contracts'
 import { ProfileCompositionError } from '../../contracts'
 
 /**
@@ -12,6 +12,7 @@ import { ProfileCompositionError } from '../../contracts'
 let database: (ProfileDatabase & { schema: string }) | null = null
 let keyWrapper: ProfileKeyWrapper | null = null
 let disclosureContext: ProfileDisclosureContextPort | null = null
+let subjectResolver: ProfileSubjectResolver | null = null
 
 export function provideProfileDatabase(next: ProfileDatabase): void {
   if (next?.dialect !== 'postgres' || typeof next.pool?.query !== 'function' || typeof next.pool.connect !== 'function') {
@@ -37,6 +38,19 @@ export function provideProfileDisclosureContext(next: ProfileDisclosureContextPo
   disclosureContext = next
 }
 
+/** The signed-in person for each `/api/profile/*` request, from Authentication through the host. */
+export function provideProfileSubjectResolver(next: ProfileSubjectResolver): void {
+  if (typeof next?.resolve !== 'function') {
+    throw new TypeError('provideProfileSubjectResolver expects an object with a resolve(event) function.')
+  }
+  subjectResolver = next
+}
+
+export function useProfileSubjectResolver(): ProfileSubjectResolver {
+  if (!subjectResolver) throw new ProfileCompositionError('ProfileSubjectResolver')
+  return subjectResolver
+}
+
 export function useProfileDatabase(): ProfileDatabase & { schema: string } {
   if (!database) throw new ProfileCompositionError('ProfileDatabase')
   return database
@@ -57,4 +71,5 @@ export function clearProfileComposition(): void {
   database = null
   keyWrapper = null
   disclosureContext = null
+  subjectResolver = null
 }

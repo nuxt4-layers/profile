@@ -102,7 +102,7 @@ describe.skipIf(!hasDatabase)('Profile storage on PostgreSQL', () => {
     expect(await service().applyIdentityEvent(event)).toBe('duplicate')
     const robot = uuidv7()
     expect(await provision(robot, 'service')).toBe('applied')
-    expect(await service().own({ subjectId: ids.ada })).toEqual({ attributes: {}, settings: DEFAULT_DISCLOSURE_SETTINGS })
+    expect(await service().own({ subjectId: ids.ada })).toEqual({ attributes: {}, settings: DEFAULT_DISCLOSURE_SETTINGS, version: 1 })
     const records = await admin.query('select "identity_id" from "profile"."record"')
     expect(records.rows.map(row => row.identity_id).sort()).toEqual([ids.ada, ids.grace].sort())
     expect((await outbox()).filter(e => e.type === 'profile.created').map(e => e.data.identityId).sort()).toEqual([ids.ada, ids.grace].sort())

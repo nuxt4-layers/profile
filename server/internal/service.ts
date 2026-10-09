@@ -13,6 +13,7 @@ import type {
   ProfileEventPublisher,
   ProfileEventType,
   ProfileKeyWrapper,
+  ProfileOwnView,
 } from '../../contracts'
 import {
   chosenDisplayName,
@@ -25,6 +26,7 @@ import {
   DISCLOSURE_MAX_SUBJECTS,
   identifierSchema,
   LOOKUP_PURPOSES,
+  PROFILE_LOOKUP_RATE_LIMIT,
   PROFILE_ATTRIBUTES,
   profileAttributesSchema,
   profileChangesSchema,
@@ -53,10 +55,7 @@ export interface ServiceDependencies {
   now?: () => Date
 }
 
-export interface OwnProfile {
-  attributes: ProfileAttributes
-  settings: DisclosureSettings
-}
+export type OwnProfile = ProfileOwnView
 
 export interface DepartureExport {
   groupId: string
@@ -165,6 +164,17 @@ export function createService({ pool, schema, keys, disclosure, now = () => new 
   }
 
   interface StoredRecord { key: Uint8Array, attributes: ProfileAttributes, settings: DisclosureSettings, version: number }
+
+  /** Refuses a change made against an older version than the one stored (0 when none is). Locks the row. */
+  async function checkVersion(client: Client, identityId: string, expected: number | undefined): Promise<void> {
+    if (expected === undefined) return
+    const { rows } = await client.query(`select "version" from ${s}."record" where "identity_id" = $1 for update`, [identityId])
+    const current = (rows[0]?.version as number | undefined) ?? 0
+    if (current !== expected) throw new ProfileFailure('conflict', 'version-changed')
+  }
+
+  const expectedVersionOf = (value: unknown): number | undefined =>
+    value === undefined ? undefined : parse(() => { if (!Number.isInteger(value) || (value as number) < 0) throw new Error('invalid'); return value as number })
 
   async function decodeRecord(identityId: string, row: Record<string, unknown>): Promise<StoredRecord> {
     const key = await unwrap(identityId, row.key_version as string, row.wrapped_key as string)
@@ -350,15 +360,17 @@ export function createService({ pool, schema, keys, disclosure, now = () => new 
       const { rows } = await poolRead(() => pool.query(`select 1 from ${s}."erased" where "identity_id" = $1`, [subjectId]) as Promise<{ rows: unknown[] }>)
       if (rows.length > 0) return null
       const record = await poolRead(() => readRecord(pool, subjectId))
-      return record ? { attributes: record.attributes, settings: record.settings } : { attributes: {}, settings: DEFAULT_DISCLOSURE_SETTINGS }
+      return record ? { attributes: record.attributes, settings: record.settings, version: record.version } : { attributes: {}, settings: DEFAULT_DISCLOSURE_SETTINGS, version: 0 }
     },
 
     /** The person changes their own attributes: values set, `null` removes. Contact details are stored unverified. */
-    async update(input: { subjectId: unknown, changes: unknown, correlationId: unknown }): Promise<OwnProfile> {
+    async update(input: { subjectId: unknown, changes: unknown, correlationId: unknown, expectedVersion?: unknown }): Promise<OwnProfile> {
       const subjectId = parse(() => identifierSchema.parse(input.subjectId))
       const correlationId = parse(() => correlationIdSchema.parse(input.correlationId))
       const changes = parse(() => profileChangesSchema.parse(input.changes))
+      const expected = expectedVersionOf(input.expectedVersion)
       return transaction(async (client) => {
+        await checkVersion(client, subjectId, expected)
         if (await ensureRecord(client, subjectId, correlationId) === 'erased') throw new ProfileFailure('forbidden')
         const record = (await readRecord(client, subjectId, true))!
         const attributes: Record<string, unknown> = { ...record.attributes }
@@ -380,22 +392,24 @@ export function createService({ pool, schema, keys, disclosure, now = () => new 
         record.attributes = attributes as ProfileAttributes
         await writeRecord(client, subjectId, record)
         await emit(client, event('profile.changed', { identityId: subjectId, attributes: changed, disclosure: false }, correlationId))
-        return { attributes: record.attributes, settings: record.settings }
+        return { attributes: record.attributes, settings: record.settings, version: record.version + 1 }
       })
     },
 
     /** The person sets who sees each attribute, which name others see, and their departure choice. */
-    async setDisclosure(input: { subjectId: unknown, settings: unknown, correlationId: unknown }): Promise<OwnProfile> {
+    async setDisclosure(input: { subjectId: unknown, settings: unknown, correlationId: unknown, expectedVersion?: unknown }): Promise<OwnProfile> {
       const subjectId = parse(() => identifierSchema.parse(input.subjectId))
       const correlationId = parse(() => correlationIdSchema.parse(input.correlationId))
       const settings = parse(() => disclosureSettingsSchema.parse(input.settings))
+      const expected = expectedVersionOf(input.expectedVersion)
       return transaction(async (client) => {
+        await checkVersion(client, subjectId, expected)
         if (await ensureRecord(client, subjectId, correlationId) === 'erased') throw new ProfileFailure('forbidden')
         const record = (await readRecord(client, subjectId, true))!
         record.settings = settings
         await writeRecord(client, subjectId, record)
         await emit(client, event('profile.changed', { identityId: subjectId, attributes: [], disclosure: true }, correlationId))
-        return { attributes: record.attributes, settings: record.settings }
+        return { attributes: record.attributes, settings: record.settings, version: record.version + 1 }
       })
     },
 
@@ -415,6 +429,27 @@ export function createService({ pool, schema, keys, disclosure, now = () => new 
         )
         await emit(client, event('profile.departure-anonymised', { identityId: subjectId, groupId }, correlationId))
       })
+    },
+
+    /**
+     * Counts one lookup by the viewer against `PROFILE_LOOKUP_RATE_LIMIT`.
+     * Refuses with `rate-limited` once the window's allowance is spent.
+     */
+    async consumeLookup(input: { viewerId: unknown }): Promise<void> {
+      const viewerId = parse(() => identifierSchema.parse(input.viewerId))
+      const { requests, windowSeconds } = PROFILE_LOOKUP_RATE_LIMIT
+      const at = now().getTime()
+      const windowStart = new Date(at - (at % (windowSeconds * 1000))).toISOString()
+      const count = await transaction(async (client) => {
+        await client.query(`delete from ${s}."lookup_window" where "viewer_id" = $1 and "window_start" < $2`, [viewerId, windowStart])
+        const { rows } = await client.query(
+          `insert into ${s}."lookup_window" ("viewer_id", "window_start", "count") values ($1, $2, 1)
+           on conflict ("viewer_id", "window_start") do update set "count" = ${s}."lookup_window"."count" + 1 returning "count"`,
+          [viewerId, windowStart],
+        )
+        return rows[0]!.count as number
+      })
+      if (count > requests) throw new ProfileFailure('rate-limited')
     },
 
     /** Display names for up to 200 people, as the viewer may see them, in the order asked. */

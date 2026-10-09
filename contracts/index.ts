@@ -65,8 +65,22 @@ export {
 export type { ProfileEvent, ProfileEventType } from '../shared/events'
 export { IDENTITY_EVENTS_HANDLED, PROFILE_EVENT_PAYLOADS, PROFILE_EVENT_TYPES, profileEventSchema } from '../shared/events'
 
+// HTTP API
+export type { ProfileOwnView, ProfilePersonView, ProfileSubject } from '../shared/api'
+export {
+  disclosureRequestSchema,
+  displayNamesRequestSchema,
+  PROFILE_API_PREFIX,
+  PROFILE_CORRELATION_HEADER,
+  PROFILE_LOOKUP_RATE_LIMIT,
+  PROFILE_STEP_UP_SECONDS,
+  profileSubjectSchema,
+  STEP_UP_ATTRIBUTES,
+  updateProfileRequestSchema,
+} from '../shared/api'
+
 // Errors
-export type { ProfileErrorCode } from '../shared/errors'
+export type { ProfileErrorBody, ProfileErrorCode } from '../shared/errors'
 export { isProfileErrorCode, PROFILE_ERROR_CODES, PROFILE_ERROR_STATUS, ProfileCompositionError, ProfileFailure } from '../shared/errors'
 
 // Ports
@@ -78,5 +92,6 @@ export type {
   ProfileDisclosureContextPort,
   ProfileEventPublisher,
   ProfileKeyWrapper,
+  ProfileSubjectResolver,
   WrappedProfileKey,
 } from '../shared/ports'
