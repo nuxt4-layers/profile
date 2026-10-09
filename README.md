@@ -4,7 +4,7 @@ Nuxt 4 foundation layer for the personal data that describes a person: what is h
 
 Part of the `nuxt4-layers` Identity and Access Management (IAM) suite, with [`authentication`](https://github.com/nuxt4-layers/authentication), `identity`, [`authorisation`](https://github.com/nuxt4-layers/authorisation) and [`iam-integration`](https://github.com/nuxt4-layers/iam-integration).
 
-**Status:** not started. Profile is designed after Identity, because it is keyed by Identity's identifiers and consumes Identity's events.
+**Status:** phase 1 of 5, foundation and storage: the contract, composition ports, encrypted PostgreSQL storage, disclosure rules, the departure data policy, Identity's events, erasure, export and key rotation. Endpoints and pages follow (see [docs/roadmap.md](docs/roadmap.md)).
 
 ## Owns
 
@@ -25,17 +25,29 @@ Part of the `nuxt4-layers` Identity and Access Management (IAM) suite, with [`au
 
 Profile may hold the same email address as a sign-in identifier held by Authentication, as an independent contact detail. Changing one does not change the other unless the person asks for both, and erasure covers both.
 
-## Planned interfaces
-
-These are specified in `iam-integration` and will be defined in Profile's own contract:
+## Interfaces
 
 | Direction | Interface | Purpose |
 |---|---|---|
-| Consumes from Identity | Disclosure-context port | The viewer's relationship to the subject, and the group's departure data policy |
-| Consumes from Identity | Events `identity.provisioned`, `identity.paused`, `identity.resumed`, `identity.suspended`, `identity.closed`, `membership.*` | Create, hide, show or anonymise records |
-| Provides to domain capabilities | Display names | Names for a list of identifiers, filtered by the viewer's disclosure context |
-| Provides to the person | Data-subject requests | Access, correction, export and erasure, coordinated across the suite |
-| Publishes | `profile.anonymised` | Tells capabilities that cached names to drop them |
+| Consumes from Identity | Disclosure-context port | The viewer's relationship to each person, the person's standing, and the group's departure data policy |
+| Consumes from Identity | Events `identity.provisioned`, `membership.ended`, `identity.closed` | Create the record, keep how a leaver is shown, erase on closure |
+| Consumes from the host | Key-wrapping port | Wraps each person's data key with a versioned host key (KMS, HSM, vault) |
+| Provides to domain capabilities | `lookupProfileDisplayNames` | Names for up to 200 identifiers, as the viewer may see them |
+| Provides to the person | Own record, disclosure settings, departure anonymity, export | Through server functions now; endpoints and pages in phases 2 and 3 |
+| Publishes | `profile.created`, `profile.changed`, `profile.departure-anonymised`, `profile.anonymised` | Identifiers, attribute names and codes only |
+
+## Documentation
+
+- [Contract](docs/contracts.md): the record, disclosure, departures, encryption and erasure, events, ports and server functions
+- [Composition contract](docs/composition-contract.md): what a host supplies
+- [Threat model](docs/threat-model.md): control register and gaps
+- [Design decisions](docs/design-decisions.md) and [roadmap](docs/roadmap.md)
+
+## Commands
+
+- `pnpm install`, then `pnpm dev:prepare`
+- `pnpm check`: typecheck and tests. The PostgreSQL suite needs `PROFILE_TEST_DATABASE_URL` (admin URL of a local, disposable PostgreSQL 16); it skips locally without it and fails in CI
+- `pnpm build:playground`: proves the layer composes in a host
 
 ## Governing decisions and specifications
 

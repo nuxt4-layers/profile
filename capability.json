@@ -1,0 +1,43 @@
+{
+  "schemaVersion": "1",
+  "name": "@nuxt4-layers/profile",
+  "version": "0.1.0",
+  "classification": "foundation",
+  "provides": [
+    {
+      "capability": "Profile",
+      "contractVersion": "1"
+    }
+  ],
+  "requires": [
+    {
+      "capability": "Identity",
+      "contractVersion": "1",
+      "optional": false,
+      "purpose": "the identifiers records are keyed by, its lifecycle events, and the disclosure-context port, adapted by the host; there is no package dependency"
+    }
+  ],
+  "publicExports": [
+    ".",
+    "./contracts",
+    "./capability"
+  ],
+  "ports": [
+    {
+      "port": "ProfileDatabase",
+      "optional": false
+    },
+    {
+      "port": "ProfileKeyWrapper",
+      "optional": false
+    },
+    {
+      "port": "ProfileDisclosureContext",
+      "optional": false
+    }
+  ],
+  "integration": {
+    "consumers": "domain capabilities store identifiers only and ask Profile for display names; they never read the profile schema",
+    "composition": "host supplies ports from a Nitro plugin; persistence follows ADR-0002 and ADR-0006; identities and memberships belong to Identity"
+  }
+}

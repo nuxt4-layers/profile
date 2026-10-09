@@ -1,0 +1,73 @@
+import { z } from 'zod'
+import { safeNameSchema } from './safe-names'
+
+/**
+ * The attributes of a person's record (docs/contracts.md §3), named as the
+ * OpenID Connect standard claims (iam-integration improvement register
+ * item 17). Profile is their only canonical source: Authentication never
+ * stores or seeds them.
+ *
+ * Contact details are independent of Authentication's sign-in identifiers,
+ * and are never verified in this contract version: `email_verified` and
+ * `phone_number_verified` are always false, and Profile never sends to them.
+ */
+
+export const PROFILE_ATTRIBUTES = [
+  'name',
+  'given_name',
+  'family_name',
+  'preferred_username',
+  'locale',
+  'zoneinfo',
+  'email',
+  'phone_number',
+] as const
+
+export type ProfileAttribute = typeof PROFILE_ATTRIBUTES[number]
+
+/** A BCP 47 language tag, e.g. `en-GB`. */
+export const LOCALE_PATTERN = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/
+
+/** An E.164 telephone number, e.g. `+447700900123`. */
+export const PHONE_NUMBER_PATTERN = /^\+[1-9][0-9]{6,14}$/
+
+const timeZones: ReadonlySet<string> = new Set([...Intl.supportedValuesOf('timeZone'), 'UTC'])
+
+/** What a person may set, each validated and normalised. */
+export const attributeSchemas = {
+  name: safeNameSchema(),
+  given_name: safeNameSchema(),
+  family_name: safeNameSchema(),
+  preferred_username: safeNameSchema(64),
+  locale: z.string().max(35).regex(LOCALE_PATTERN, 'invalid-locale'),
+  zoneinfo: z.string().refine(value => timeZones.has(value), 'invalid-time-zone'),
+  email: z.string().trim().max(254).pipe(z.email('invalid-email')),
+  phone_number: z.string().trim().regex(PHONE_NUMBER_PATTERN, 'invalid-phone-number'),
+} as const satisfies Record<ProfileAttribute, z.ZodType<string>>
+
+/**
+ * A change to the record: a value sets an attribute, `null` removes it, and
+ * an attribute left out is unchanged.
+ */
+export const profileChangesSchema = z.strictObject(
+  Object.fromEntries(PROFILE_ATTRIBUTES.map(key => [key, attributeSchemas[key].nullable().optional()])) as {
+    [K in ProfileAttribute]: z.ZodOptional<z.ZodNullable<(typeof attributeSchemas)[K]>>
+  },
+).refine(changes => Object.keys(changes).length > 0, 'no-changes')
+
+export type ProfileChanges = z.input<typeof profileChangesSchema>
+
+/** The record as held: every attribute optional, plus the OIDC verification claims. */
+export const profileAttributesSchema = z.strictObject({
+  ...Object.fromEntries(PROFILE_ATTRIBUTES.map(key => [key, z.string().optional()])) as { [K in ProfileAttribute]: z.ZodOptional<z.ZodString> },
+  email_verified: z.literal(false).optional(),
+  phone_number_verified: z.literal(false).optional(),
+})
+
+export type ProfileAttributes = z.infer<typeof profileAttributesSchema>
+
+/** The verification claim that follows an attribute, if any. */
+export const VERIFICATION_CLAIMS: Readonly<Partial<Record<ProfileAttribute, 'email_verified' | 'phone_number_verified'>>> = Object.freeze({
+  email: 'email_verified',
+  phone_number: 'phone_number_verified',
+})

@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   markdown:
     runs-on: ubuntu-latest
@@ -20,11 +24,45 @@ jobs:
       - name: Check Markdown headings and local links
         run: python3 scripts/check_markdown.py
 
+  layer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        # Disposable database for the storage tests (ADR-0002); never a hosted one.
+        # AWS ECR Public mirror of the official image: Docker Hub rate-limits
+        # anonymous pulls from shared runners.
+        image: public.ecr.aws/docker/library/postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PROFILE_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm dev:prepare
+      - run: pnpm check
+      - run: pnpm build:playground
+
   # Gate for the `quality` status check that the master ruleset requires of
   # every repository. It passes only when every check above has passed.
   quality:
-    needs: [markdown]
+    needs: [markdown, layer]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - run: echo "Documentation checks passed."
+      - run: echo "Documentation and layer checks passed."
