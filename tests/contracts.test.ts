@@ -1,0 +1,96 @@
+import { readdirSync, readFileSync } from 'node:fs'
+import { dirname, join, normalize, relative } from 'node:path'
+import { describe, expect, it } from 'vitest'
+import * as contracts from '../contracts'
+
+const root = normalize(join(import.meta.dirname, '..'))
+
+function files(dir: string): string[] {
+  return readdirSync(join(root, dir), { recursive: true, encoding: 'utf8' })
+    .filter(file => file.endsWith('.ts'))
+    .map(file => join(dir, file))
+}
+
+function imports(file: string): string[] {
+  const source = readFileSync(join(root, file), 'utf8')
+  return [...source.matchAll(/(?:from|import)\s*\(?\s*'([^']+)'/g)].map(([, specifier]) =>
+    specifier!.startsWith('.') ? relative(root, join(root, dirname(file), specifier!)) : specifier!)
+}
+
+const contractFiles = [...files('contracts'), ...files('shared')]
+
+describe('Profile public contract', () => {
+  it('imports nothing but zod and its own modules', () => {
+    for (const file of contractFiles) {
+      for (const target of imports(file)) {
+        expect(target === 'zod' || /^(contracts|shared)\//.test(target), `${file} imports ${target}`).toBe(true)
+      }
+    }
+  })
+
+  it('never names a driver, key service or other capability\'s package', () => {
+    const forbidden = /^pg$|kysely|drizzle|@aws-sdk|@google-cloud|@azure|^@nuxt4-layers\/|^node:|^#|^h3$|^vue$|^nuxt/
+    for (const file of contractFiles) {
+      for (const target of imports(file)) expect(forbidden.test(target), `${file} imports ${target}`).toBe(false)
+    }
+  })
+
+  it('names the record\'s attributes as OpenID Connect standard claims', () => {
+    expect(contracts.PROFILE_ATTRIBUTES).toEqual(['name', 'given_name', 'family_name', 'preferred_username', 'locale', 'zoneinfo', 'email', 'phone_number'])
+  })
+
+  it('discloses the name to fellow group members by default, and nothing else to anyone', () => {
+    const { audiences } = contracts.DEFAULT_DISCLOSURE_SETTINGS
+    expect(audiences.name).toBe('group')
+    for (const key of contracts.PROFILE_ATTRIBUTES) if (key !== 'name') expect(audiences[key]).toBe('nobody')
+    expect(contracts.DEFAULT_DISCLOSURE_SETTINGS.displayName).toBe('name')
+    expect(contracts.DEFAULT_DISCLOSURE_SETTINGS.anonymiseOnDeparture).toBe(false)
+  })
+
+  it('carries no attribute value in any event: identifiers, attribute names and codes only', () => {
+    const at = '2026-10-09T12:00:00.000Z'
+    const ids = { eventId: '01928c4e-0000-7000-8000-000000000001', occurredAt: at, correlationId: '01928c4e-0000-7000-8000-0000000000aa' }
+    const identityId = '01928c4e-0000-7000-8000-000000000002'
+    expect(contracts.profileEventSchema.safeParse({ ...ids, type: 'profile.changed', data: { identityId, attributes: ['name'], disclosure: false } }).success).toBe(true)
+    expect(contracts.profileEventSchema.safeParse({ ...ids, type: 'profile.changed', data: { identityId, attributes: ['name'], disclosure: false, name: 'Ada' } }).success).toBe(false)
+    expect(contracts.profileEventSchema.safeParse({ ...ids, type: 'profile.anonymised', data: { identityId: 'ada@example.com', reasonCode: 'identity-closed' } }).success).toBe(false)
+    expect(contracts.profileEventSchema.safeParse({ ...ids, type: 'profile.anonymised', data: { identityId, reasonCode: 'Ada Lovelace' } }).success).toBe(false)
+  })
+
+  it('keeps errors coarse', () => {
+    expect(contracts.PROFILE_ERROR_CODES).toEqual(['unauthenticated', 'forbidden', 'validation-failed', 'unavailable'])
+    expect(new contracts.ProfileFailure('forbidden').code).toBe('forbidden')
+  })
+})
+
+describe('Attributes', () => {
+  const changes = (value: Record<string, unknown>) => contracts.profileChangesSchema.safeParse(value)
+
+  it('normalises names and refuses unsafe ones', () => {
+    expect(changes({ name: '  Ada   Lovelace ' })).toMatchObject({ success: true, data: { name: 'Ada Lovelace' } })
+    expect(changes({ name: 'Ada‮Lovelace' }).success).toBe(false)
+    expect(changes({ name: 'Аda' }).success).toBe(false)
+    expect(changes({ given_name: '' }).success).toBe(false)
+    expect(changes({ preferred_username: 'a'.repeat(65) }).success).toBe(false)
+  })
+
+  it('accepts a BCP 47 locale, an IANA time zone, an email address and an E.164 number', () => {
+    expect(changes({ locale: 'en-GB', zoneinfo: 'Europe/London', email: 'ada@example.com', phone_number: '+447700900123' }).success).toBe(true)
+    expect(changes({ locale: 'english' }).success).toBe(false)
+    expect(changes({ zoneinfo: 'Mars/Olympus' }).success).toBe(false)
+    expect(changes({ email: 'not an address' }).success).toBe(false)
+    expect(changes({ phone_number: '07700 900123' }).success).toBe(false)
+  })
+
+  it('removes with null, and refuses an empty change or an unknown attribute', () => {
+    expect(changes({ email: null }).success).toBe(true)
+    expect(changes({}).success).toBe(false)
+    expect(changes({ picture: 'https://example.com/a.png' }).success).toBe(false)
+    expect(changes({ email_verified: true }).success).toBe(false)
+  })
+
+  it('never holds a verified contact detail in this contract version', () => {
+    expect(contracts.profileAttributesSchema.safeParse({ email: 'ada@example.com', email_verified: true }).success).toBe(false)
+    expect(contracts.profileAttributesSchema.safeParse({ email: 'ada@example.com', email_verified: false }).success).toBe(true)
+  })
+})
