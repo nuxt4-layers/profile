@@ -4,7 +4,7 @@ Nuxt 4 foundation layer for the personal data that describes a person: what is h
 
 Part of the `nuxt4-layers` Identity and Access Management (IAM) suite, with [`authentication`](https://github.com/nuxt4-layers/authentication), `identity`, [`authorisation`](https://github.com/nuxt4-layers/authorisation) and [`iam-integration`](https://github.com/nuxt4-layers/iam-integration).
 
-**Status:** phase 1 of 5, foundation and storage: the contract, composition ports, encrypted PostgreSQL storage, disclosure rules, the departure data policy, Identity's events, erasure, export and key rotation. Endpoints and pages follow (see [docs/roadmap.md](docs/roadmap.md)).
+**Status:** phase 2 of 5: the contract, encrypted PostgreSQL storage, disclosure rules, the departure data policy, Identity's events, erasure, export and key rotation, and the `/api/profile/*` endpoints with `useProfile()`. Default pages follow (see [docs/roadmap.md](docs/roadmap.md)).
 
 ## Owns
 
@@ -33,7 +33,7 @@ Profile may hold the same email address as a sign-in identifier held by Authenti
 | Consumes from Identity | Events `identity.provisioned`, `membership.ended`, `identity.closed` | Create the record, keep how a leaver is shown, erase on closure |
 | Consumes from the host | Key-wrapping port | Wraps each person's data key with a versioned host key (KMS, HSM, vault) |
 | Provides to domain capabilities | `lookupProfileDisplayNames` | Names for up to 200 identifiers, as the viewer may see them |
-| Provides to the person | Own record, disclosure settings, departure anonymity, export | Through server functions now; endpoints and pages in phases 2 and 3 |
+| Provides to the person | Own record, disclosure settings, departure anonymity, export | `/api/profile/*` endpoints and `useProfile()`; pages in phase 3 |
 | Publishes | `profile.created`, `profile.changed`, `profile.departure-anonymised`, `profile.anonymised` | Identifiers, attribute names and codes only |
 
 ## Documentation

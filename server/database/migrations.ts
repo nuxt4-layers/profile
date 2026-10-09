@@ -76,6 +76,18 @@ create table {{schema}}."outbox" (
 create index "outbox_unpublished_idx" on {{schema}}."outbox" ("sequence") where "published_at" is null;
 `,
   },
+  {
+    id: '0002_lookup_rate_limit',
+    sql: `
+-- Lookups each viewer made in the current window (PROFILE_LOOKUP_RATE_LIMIT).
+create table {{schema}}."lookup_window" (
+  "viewer_id" text not null,
+  "window_start" timestamptz not null,
+  "count" integer not null check ("count" > 0),
+  primary key ("viewer_id", "window_start")
+);
+`,
+  },
 ]
 
 const SCHEMA_PATTERN = /^[a-z_][a-z0-9_]{0,62}$/
@@ -119,7 +131,7 @@ export async function runProfileMigrations(pool: PostgresPoolLike, schema: strin
     if (runtimeRole) {
       const role = `"${runtimeRole}"`
       await client.query(`grant usage on schema ${quoted} to ${role}`)
-      await client.query(`grant select, insert, update, delete on ${quoted}."subject_key", ${quoted}."record", ${quoted}."departure", ${quoted}."pseudonym_counter", ${quoted}."processed_event", ${quoted}."outbox" to ${role}`)
+      await client.query(`grant select, insert, update, delete on ${quoted}."subject_key", ${quoted}."record", ${quoted}."departure", ${quoted}."pseudonym_counter", ${quoted}."processed_event", ${quoted}."outbox", ${quoted}."lookup_window" to ${role}`)
       await client.query(`grant select, insert on ${quoted}."erased" to ${role}`)
       await client.query(`grant usage on sequence ${quoted}."outbox_sequence_seq" to ${role}`)
     }

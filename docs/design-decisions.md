@@ -29,3 +29,10 @@ Hidden from listings and profiles, but still attributed on past contributions. H
 ## 7. Encryption and backups
 
 Each person's attributes are encrypted with their own data key, which Profile stores only wrapped by the host's versioned key port, so erasure can reach backups (crypto-shredding). Keeping keys in Profile's database means a backup also holds the wrapped key; the host therefore rotates its wrapping key, Profile re-wraps live keys, and the host retires an old version once its backups expire. A separate key-store port (destroying each key in a KMS at once) was considered; it is stronger but asks every host to run a second store.
+
+## 8. The HTTP API (phase 2)
+
+- **Display-name lookups from the browser:** an endpoint, so client-side pages can show names, limited to 60 lookups a minute per viewer. Server-only lookups were considered; they would force every page that shows names to render on the server.
+- **Recent sign-in:** for the data export (as the data-subject process requires) and for changing a contact detail. Names, locale, time zone and disclosure settings can be changed in any signed-in session. Requiring it for every change was considered and rejected as too frequent an interruption.
+- **No erasure endpoint:** erasure follows account closure, or an operator acting on a verified request, so there is one path, as the data-subject process describes. The person can remove any attribute themselves.
+- **Lost updates:** each change carries the version it was made against, and a stale one is refused. Last write wins was considered; it lets one tab undo another's edit silently.

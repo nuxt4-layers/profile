@@ -89,8 +89,11 @@ The data key is stored only **wrapped** by the host's `ProfileKeyWrapper`, which
 |---|---|---|
 | `unauthenticated` | 401 | No signed-in subject |
 | `forbidden` | 403 | Refused. Never says whether a person or record exists |
+| `insufficient-assurance` | 403 | Needs a sign-in within the last 15 minutes (§12) |
 | `validation-failed` | 400 | Malformed input; problem codes only |
-| `unavailable` | 503 | Database, key port or Identity's port failure. Fails closed: no stale or partial answer |
+| `conflict` | 409 | The record changed since the version the change was made against (`version-changed`) |
+| `rate-limited` | 429 | The viewer's lookups for this window are spent |
+| `unavailable` | 503 | Database, key port, subject resolver or Identity's port failure. Fails closed: no stale or partial answer |
 
 ## 8. Events
 
@@ -114,17 +117,19 @@ Profile consumes `identity.provisioned`, `membership.ended` and `identity.closed
 | `ProfileDatabase` | Yes | PostgreSQL pool (runtime role), schema, and optionally the migration pool and the runtime role to grant |
 | `ProfileKeyWrapper` | Yes | Wraps and unwraps each person's data key with a versioned host key (KMS, HSM, vault; `createLocalProfileKeyWrapper` for development) |
 | `ProfileDisclosureContext` | Yes | Identity's disclosure-context port, read `bounded` |
+| `ProfileSubjectResolver` | For the endpoints | The signed-in person for an HTTP request, from Authentication through the host |
 
 ## 10. Server functions
 
 | Function | Does |
 |---|---|
 | `migrateProfileDatabase()` | Applies migrations through the migration pool, granting the runtime role data access only |
-| `getOwnProfile({ subjectId })` | The person's own record and settings; defaults if none yet; null once erased |
-| `updateProfile({ subjectId, changes, correlationId })` | §3 |
-| `setProfileDisclosure({ subjectId, settings, correlationId })` | §4 |
+| `getOwnProfile({ subjectId })` | The person's own record, settings and `version` (0 before anything is stored); null once erased |
+| `updateProfile({ subjectId, changes, correlationId, expectedVersion? })` | §3; with `expectedVersion`, `conflict` if the record changed since |
+| `setProfileDisclosure({ subjectId, settings, correlationId, expectedVersion? })` | §4; likewise |
 | `anonymiseProfileDeparture({ subjectId, groupId, correlationId })` | §5.1 |
 | `lookupProfileDisplayNames({ viewerId, subjectIds, groupId?, purpose })` | Up to 200 display names, in the order asked (§5) |
+| `consumeProfileLookup({ viewerId })` | Counts one lookup against the rate limit (§12); `rate-limited` once spent |
 | `viewProfile({ viewerId, subjectId, groupId? })` | One person's display name and disclosed attributes, as a listing |
 | `exportProfileData({ subjectId })` | Profile's part of a data-subject export, decrypted |
 | `applyProfileIdentityEvent(event)` | §8 |
@@ -132,8 +137,32 @@ Profile consumes `identity.provisioned`, `membership.ended` and `identity.closed
 | `rewrapProfileKeys({ limit? })`, `profileKeyVersionsInUse()` | Key rotation (§6) |
 | `relayProfileOutbox({ publish, limit? })` | §8 |
 
-The caller supplies `subjectId` and `viewerId` from the signed-in principal, never from a request body. Endpoints and pages follow in later phases.
+The caller supplies `subjectId` and `viewerId` from the signed-in principal, never from a request body.
 
 ## 11. Versioning
 
-This is contract version 1, provided by package 0.1. Before 1.0, breaking changes are listed here and in the release notes.
+This is contract version 1, provided by package 0.2. Before 1.0, breaking changes are listed here and in the release notes. Package 0.2 adds the HTTP API (§12), record versions, the `insufficient-assurance`, `conflict` and `rate-limited` codes and the subject-resolver port, without changing what version 0.1 provided.
+
+## 12. HTTP API
+
+Under `/api/profile`. Every endpoint takes the person or viewer only from the host's subject resolver (Authentication), never from the request; parses bodies with strict schemas; and answers errors as `ProfileErrorBody`: the code, a localisation key, and a problem code for `validation-failed` and `conflict` only. State-changing requests must carry an `Origin` (or `Referer`) matching `NUXT_PROFILE_BASE_URL`; without one configured, they are all refused.
+
+| Endpoint | Does | Needs |
+|---|---|---|
+| `GET /me` | The person's own record, settings and version | Signed in |
+| `PATCH /me` | `{ expectedVersion, changes }` (§3) | A sign-in within 15 minutes if the change touches `email` or `phone_number` |
+| `PUT /me/disclosure` | `{ expectedVersion, settings }` (§4) | Signed in |
+| `POST /me/departures/:groupId/anonymise` | §5.1 | Signed in |
+| `GET /me/export` | Profile's part of the person's export, `Cache-Control: no-store` | A sign-in within 15 minutes |
+| `POST /display-names` | `{ subjectIds (≤ 200), groupId?, purpose }` (§5) | Signed in; rate-limited |
+| `GET /people/:subjectId?groupId=` | One person's display name and disclosed attributes, as a listing | Signed in; rate-limited |
+
+A change sent against an older version than the one stored is refused with `conflict` (`version-changed`), so one tab cannot silently undo another's edit; the client reads `/me` again and retries.
+
+Each viewer may make `PROFILE_LOOKUP_RATE_LIMIT` lookups (60 a minute, each up to 200 people) through the two lookup endpoints, counted in Profile's database. Host server code calling `lookupProfileDisplayNames` directly is not limited.
+
+There is no erasure endpoint: erasure follows account closure (Identity's process), or an operator's `eraseProfile` on a verified request. The person can remove any attribute themselves.
+
+`useProfile()` is the client side of this API, for the user experience only: it decides nothing.
+
+Responses are never for another person than the one asked for: a hidden answer is the same whether or not the person exists.

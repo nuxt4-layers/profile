@@ -13,7 +13,7 @@ Profile holds the personal data that describes people, so its first duty is that
 
 | Boundary | Trusted input | Untrusted input |
 |---|---|---|
-| Browser → host → Profile | The signed-in principal, read on the server | Every identifier and value in a request |
+| Browser → host → Profile | The signed-in principal, from the host's subject resolver | Every identifier and value in a request, and its origin |
 | Identity → host → Profile | The disclosure-context answer and relayed events, parsed before use | — |
 | Profile → key service | The wrapped key and its version | — |
 | Host → database | Profile's schema, through a runtime role that owns nothing | Other capabilities' schemas (never read) |
@@ -37,13 +37,19 @@ Profile holds the personal data that describes people, so its first duty is that
 | T13 | A lost or reordered event leaves Profile inconsistent | Identity events idempotent by event id; records created on first use if provisioning is late; Profile's own events in a transactional outbox, relayed in order, at least once | database tests | Implemented |
 | T14 | A missing port leads to an implicit store or key | Required ports fail closed (`ProfileCompositionError`) | `tests/composition.test.ts` | Implemented |
 | T15 | A key service failure exposes or loses data | Wrap and unwrap failures refuse the operation (`unavailable`) | "fails closed when the key port fails" | Implemented |
+| T17 | Acting on someone else's profile by naming them in a request | Endpoints take the person only from the subject resolver; strict bodies refuse unknown fields such as `subjectId` | `tests/http.test.ts` "takes the person only from the signed-in subject" | Implemented |
+| T18 | Cross-site request forgery | State-changing requests need an `Origin` or `Referer` matching the configured base URL; none configured refuses them all | `tests/http.test.ts` "refuses state-changing requests from another origin" | Implemented |
+| T19 | A stolen or unattended session exports the person's data or redirects their contact details | Export and contact-detail changes need a sign-in within 15 minutes; export is never cached | `tests/http.test.ts` "needs a recent sign-in" | Implemented |
+| T20 | Bulk harvesting of names through the lookup endpoints | Answers gated by Identity's relationships and uniform for unknown people; 60 lookups a minute per viewer, counted in the database | `tests/http.test.ts` "limits each viewer's lookups" | Implemented |
+| T21 | Lost updates between tabs or devices | Changes carry the version they were made against; a stale one is refused with `conflict` | `tests/http.test.ts` "refusing a stale version" | Implemented |
+| T22 | Values leaking in error responses | Errors carry codes only; validation problems as codes, never the value | `tests/http.test.ts` "validates bodies strictly" | Implemented |
 | T16 | Supply-chain compromise | Minimal dependencies (`zod`); `minimumReleaseAge`, `blockExoticSubdeps`, frozen lockfile, dependency review | `pnpm-workspace.yaml`, workflows | Implemented |
 
 ## 4. Gaps and risk treatments
 
 | Gap | Risk | Treatment |
 |---|---|---|
-| No endpoints or pages yet | The person cannot yet manage their profile through the browser | Phase 2 and 3; the server functions take the subject only from the caller |
+| No default pages yet | Hosts build their own profile pages on the API | Phase 3 |
 | No administrator view of suspended people | Administrators who need to know cannot see a suspended person's name | Hidden from everyone for now (the safer reading); a later phase asks Authorisation |
 | Data-subject request coordination, legal holds | Erasure and export are per-member functions only | Later phase, with iam-integration's process |
 | Contact details unverified | Cannot be used for notification | By design until a notification port exists |

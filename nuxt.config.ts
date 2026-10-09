@@ -6,4 +6,15 @@
  */
 export default defineNuxtConfig({
   compatibilityDate: '2026-06-30',
+
+  runtimeConfig: {
+    profile: {
+      /**
+       * The host's public origin (`NUXT_PROFILE_BASE_URL`). State-changing
+       * `/api/profile/*` requests must come from it; without it they are all
+       * refused.
+       */
+      baseUrl: '',
+    },
+  },
 })

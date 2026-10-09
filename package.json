@@ -1,6 +1,6 @@
 {
   "name": "@nuxt4-layers/profile",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Nuxt 4 foundation capability for the personal data that describes a person: what is held, who may see it, and how it is anonymised, under the person's control.",
@@ -15,6 +15,7 @@
     "./capability": "./capability.json"
   },
   "files": [
+    "app",
     "server",
     "shared",
     "contracts",
@@ -40,6 +41,7 @@
   "devDependencies": {
     "@types/node": "^24.13.6",
     "@types/pg": "^8.23.1",
+    "h3": "^1.15.11",
     "nuxt": "^4.5.2",
     "pg": "^8.23.1",
     "typescript": "^6.0.3",

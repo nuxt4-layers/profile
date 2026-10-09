@@ -1,3 +1,4 @@
+import type { ProfileSubject } from './api'
 import type { DisclosureContext } from './disclosure'
 import type { ProfileEvent } from './events'
 
@@ -83,3 +84,12 @@ export interface IdentityEventLike {
 
 /** Where `relayProfileOutbox` delivers events. A rejection leaves the event to be relayed again. */
 export type ProfileEventPublisher = (event: ProfileEvent) => Promise<void>
+
+/**
+ * Subject-resolver port, supplied from Authentication through the host: the
+ * signed-in person for an HTTP request, or null. A failure rejects, and the
+ * endpoint answers `unavailable`.
+ */
+export interface ProfileSubjectResolver {
+  resolve(event: unknown): Promise<ProfileSubject | null>
+}
