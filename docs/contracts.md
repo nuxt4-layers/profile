@@ -274,7 +274,7 @@ The person verifies a saved `email` or `phone_number`: Profile sends a 6-digit c
 
 ## 16. Time
 
-Profile reads the current time from the clock the host supplies (`provideProfileClock({ now })`), as iam-integration's architecture §7 asks of every member; without one, it uses the system clock. A host supplies the same clock to every member, or none.
+Profile reads the current time from the clock the host supplies (`provideProfileClock({ now })`), as [iam-integration's architecture §7](https://github.com/nuxt4-layers/iam-integration/blob/e986245d746507bf7093ca203e346ab1b571e3a8/docs/architecture.md#7-time) asks of every member; without one, it uses the system clock. A host supplies the same clock to every member, or none.
 
 - Every time Profile keeps or judges comes from the clock: the times it writes (records, keys, erasures, departures, requests, parts, holds, closures, codes, the outbox) and events' `occurredAt`; when a hold, a request's due date or escalation, an access archive, a verification code or its sending window, and a lookup rate-limit window ends; and whether a sign-in is recent enough for the endpoints that need one. The database judges no time of its own: each such time is passed to it from the clock.
 - A clock that throws, or answers anything but a valid `Date`, fails the operation as `unavailable`. Profile never falls back to another time.
