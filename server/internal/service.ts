@@ -64,6 +64,7 @@ import {
 } from '../../contracts'
 import type { PoolClientLike } from '../database/migrations'
 import { quoteSchema } from '../database/migrations'
+import { timeFrom } from './clock'
 import { aad, codeDigest, newCode, newDataKey, open, sameDigest, seal, uuidv7 } from './crypto'
 
 /**
@@ -86,6 +87,7 @@ export interface ServiceDependencies {
   accessDecision?: () => ProfileAccessDecision
   /** The host's notification port; required for contact-detail verification. */
   notifier?: () => ProfileNotifier
+  /** The host's clock (or the system clock); every time Profile keeps or judges comes from it. */
   now?: () => Date
 }
 
@@ -126,8 +128,11 @@ function parse<T>(run: () => T): T {
   }
 }
 
-export function createService({ pool, schema, keys, disclosure, coordinator = () => missing('ProfileRequestCoordinator'), accessDecision = () => missing('ProfileAccessDecision'), notifier = () => missing('ProfileNotifier'), now = () => new Date() }: ServiceDependencies) {
+export function createService({ pool, schema, keys, disclosure, coordinator = () => missing('ProfileRequestCoordinator'), accessDecision = () => missing('ProfileAccessDecision'), notifier = () => missing('ProfileNotifier'), now: clockNow = () => new Date() }: ServiceDependencies) {
   const s = quoteSchema(schema)
+  /** The clock's time; an invalid answer fails closed as `unavailable`. */
+  const clock = { now: clockNow }
+  const now = (): Date => timeFrom(clock)
 
   async function transaction<T>(run: (client: Client) => Promise<T>): Promise<T> {
     let client: Client
@@ -159,7 +164,7 @@ export function createService({ pool, schema, keys, disclosure, coordinator = ()
   }
 
   async function emit(client: Client, profileEvent: ProfileEvent): Promise<void> {
-    await client.query(`insert into ${s}."outbox" ("event") values ($1::jsonb)`, [JSON.stringify(profileEvent)])
+    await client.query(`insert into ${s}."outbox" ("event", "created_at") values ($1::jsonb, $2)`, [JSON.stringify(profileEvent), profileEvent.occurredAt])
   }
 
   async function unwrap(identityId: string, version: string, wrapped: string): Promise<Uint8Array> {
@@ -201,14 +206,15 @@ export function createService({ pool, schema, keys, disclosure, coordinator = ()
     catch {
       throw new ProfileFailure('unavailable', 'key wrapping failed')
     }
+    const at = now().toISOString()
     const inserted = await client.query(
-      `insert into ${s}."subject_key" ("identity_id", "key_version", "wrapped_key") values ($1, $2, $3) on conflict do nothing returning 1`,
-      [identityId, wrapped.version, wrapped.wrapped],
+      `insert into ${s}."subject_key" ("identity_id", "key_version", "wrapped_key", "created_at") values ($1, $2, $3, $4) on conflict do nothing returning 1`,
+      [identityId, wrapped.version, wrapped.wrapped, at],
     )
     if (inserted.rows.length === 0) return 'exists'
     await client.query(
-      `insert into ${s}."record" ("identity_id", "ciphertext", "disclosure") values ($1, $2, $3::jsonb)`,
-      [identityId, seal(key, '{}', aad.record(identityId)), JSON.stringify(DEFAULT_DISCLOSURE_SETTINGS)],
+      `insert into ${s}."record" ("identity_id", "ciphertext", "disclosure", "created_at", "updated_at") values ($1, $2, $3::jsonb, $4, $4)`,
+      [identityId, seal(key, '{}', aad.record(identityId)), JSON.stringify(DEFAULT_DISCLOSURE_SETTINGS), at],
     )
     await emit(client, event('profile.created', { identityId }, correlationId))
     return 'created'
@@ -253,8 +259,8 @@ export function createService({ pool, schema, keys, disclosure, coordinator = ()
 
   async function writeRecord(client: Client, identityId: string, record: StoredRecord): Promise<void> {
     await client.query(
-      `update ${s}."record" set "ciphertext" = $2, "disclosure" = $3::jsonb, "version" = "version" + 1, "updated_at" = now() where "identity_id" = $1`,
-      [identityId, seal(record.key, JSON.stringify(record.attributes), aad.record(identityId)), JSON.stringify(record.settings)],
+      `update ${s}."record" set "ciphertext" = $2, "disclosure" = $3::jsonb, "version" = "version" + 1, "updated_at" = $4 where "identity_id" = $1`,
+      [identityId, seal(record.key, JSON.stringify(record.attributes), aad.record(identityId)), JSON.stringify(record.settings), now().toISOString()],
     )
   }
 
@@ -387,8 +393,8 @@ export function createService({ pool, schema, keys, disclosure, coordinator = ()
     await client.query(`delete from ${s}."departure" where "identity_id" = $1`, [identityId])
     await client.query(`delete from ${s}."subject_key" where "identity_id" = $1`, [identityId])
     const { rows } = await client.query(
-      `insert into ${s}."erased" ("identity_id", "reason_code") values ($1, $2) on conflict do nothing returning 1`,
-      [identityId, reasonCode],
+      `insert into ${s}."erased" ("identity_id", "reason_code", "erased_at") values ($1, $2, $3) on conflict do nothing returning 1`,
+      [identityId, reasonCode, now().toISOString()],
     )
     if (rows.length === 0) return false
     await emit(client, event('profile.anonymised', { identityId, reasonCode }, correlationId))
@@ -830,7 +836,7 @@ export function createService({ pool, schema, keys, disclosure, coordinator = ()
       const identityId = type === 'group.renamed' ? null : parse(() => identifierSchema.parse(data.identityId))
       const groupId = type === 'group.renamed' || type === 'membership.ended' ? parse(() => identifierSchema.parse(data.groupId)) : null
       return transaction(async (client) => {
-        const fresh = await client.query(`insert into ${s}."processed_event" ("event_id") values ($1) on conflict do nothing returning 1`, [eventId])
+        const fresh = await client.query(`insert into ${s}."processed_event" ("event_id", "processed_at") values ($1, $2) on conflict do nothing returning 1`, [eventId, now().toISOString()])
         if (fresh.rows.length === 0) return 'duplicate'
         switch (type) {
           case 'identity.provisioned':
@@ -885,6 +891,7 @@ export function createService({ pool, schema, keys, disclosure, coordinator = ()
     async rewrapKeys(input: { limit?: number } = {}): Promise<number> {
       const limit = Math.max(1, Math.min(Math.trunc(input.limit ?? 100), 1000))
       const current = keys.currentVersion()
+      const at = now().toISOString()
       return transaction(async (client) => {
         const { rows } = await client.query(
           `select "identity_id", "key_version", "wrapped_key" from ${s}."subject_key" where "key_version" <> $1 order by "identity_id" limit $2 for update skip locked`,
@@ -901,8 +908,8 @@ export function createService({ pool, schema, keys, disclosure, coordinator = ()
             throw new ProfileFailure('unavailable', 'key wrapping failed')
           }
           await client.query(
-            `update ${s}."subject_key" set "key_version" = $2, "wrapped_key" = $3, "rewrapped_at" = now() where "identity_id" = $1`,
-            [identityId, wrapped.version, wrapped.wrapped],
+            `update ${s}."subject_key" set "key_version" = $2, "wrapped_key" = $3, "rewrapped_at" = $4 where "identity_id" = $1`,
+            [identityId, wrapped.version, wrapped.wrapped, at],
           )
         }
         return rows.length
@@ -940,7 +947,7 @@ export function createService({ pool, schema, keys, disclosure, coordinator = ()
           published.push(row.sequence)
         }
         if (published.length > 0) {
-          await client.query(`update ${s}."outbox" set "published_at" = now() where "sequence" = any ($1::bigint[])`, [published])
+          await client.query(`update ${s}."outbox" set "published_at" = $2 where "sequence" = any ($1::bigint[])`, [published, now().toISOString()])
         }
         return published.length
       })

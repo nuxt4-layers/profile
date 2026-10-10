@@ -1,14 +1,17 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { ProfileCompositionError } from '../contracts'
+import { ProfileCompositionError, ProfileFailure } from '../contracts'
+import { timeFrom } from '../server/internal/clock'
 import {
   clearProfileComposition,
   provideProfileAccessDecision,
+  provideProfileClock,
   provideProfileDatabase,
   provideProfileDisclosureContext,
   provideProfileKeyWrapper,
   provideProfileNotifier,
   provideProfileRequestCoordinator,
   useProfileAccessDecision,
+  useProfileClock,
   useProfileDatabase,
   useProfileDisclosureContext,
   useProfileKeyWrapper,
@@ -39,5 +42,30 @@ describe('composition', () => {
     expect(() => provideProfileRequestCoordinator({} as never)).toThrow(TypeError)
     expect(() => provideProfileAccessDecision({} as never)).toThrow(TypeError)
     expect(() => provideProfileNotifier({} as never)).toThrow(TypeError)
+  })
+
+  it('uses the system clock when the host supplies none, and the host\'s clock when it does', () => {
+    const before = Date.now()
+    const now = timeFrom(useProfileClock())
+    expect(now.getTime()).toBeGreaterThanOrEqual(before)
+    expect(now.getTime()).toBeLessThanOrEqual(Date.now())
+    expect(() => provideProfileClock({} as never)).toThrow(TypeError)
+    const fixed = new Date('2030-01-02T03:04:05Z')
+    provideProfileClock({ now: () => fixed })
+    expect(timeFrom(useProfileClock()).toISOString()).toBe('2030-01-02T03:04:05.000Z')
+    clearProfileComposition()
+    expect(Math.abs(timeFrom(useProfileClock()).getTime() - Date.now())).toBeLessThan(1000)
+  })
+
+  it('fails closed on a clock that throws or answers anything but a valid Date', () => {
+    for (const now of [() => new Date(Number.NaN), () => Date.now() as unknown as Date, () => null as unknown as Date, () => { throw new Error('down') }]) {
+      expect(() => timeFrom({ now })).toThrow(ProfileFailure)
+      try {
+        timeFrom({ now })
+      }
+      catch (error) {
+        expect((error as ProfileFailure).code).toBe('unavailable')
+      }
+    }
   })
 })

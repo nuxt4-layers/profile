@@ -1,5 +1,6 @@
 import type {
   ProfileAccessDecision,
+  ProfileClock,
   ProfileDatabase,
   ProfileDisclosureContextPort,
   ProfileKeyWrapper,
@@ -8,6 +9,7 @@ import type {
   ProfileSubjectResolver,
 } from '../../contracts'
 import { ProfileCompositionError } from '../../contracts'
+import { systemProfileClock } from '../internal/clock'
 
 /**
  * Composition registry. The host calls the `provide*` functions from a Nitro
@@ -15,6 +17,7 @@ import { ProfileCompositionError } from '../../contracts'
  *
  * Required ports fail closed: using one before it is supplied throws
  * `ProfileCompositionError`. There is no implicit store and no implicit key.
+ * The clock is the one optional port with a safe default: the system clock.
  */
 
 let database: (ProfileDatabase & { schema: string }) | null = null
@@ -24,6 +27,7 @@ let subjectResolver: ProfileSubjectResolver | null = null
 let requestCoordinator: ProfileRequestCoordinator | null = null
 let accessDecision: ProfileAccessDecision | null = null
 let notifier: ProfileNotifier | null = null
+let clock: ProfileClock | null = null
 
 export function provideProfileDatabase(next: ProfileDatabase): void {
   if (next?.dialect !== 'postgres' || typeof next.pool?.query !== 'function' || typeof next.pool.connect !== 'function') {
@@ -81,6 +85,23 @@ export function provideProfileNotifier(next: ProfileNotifier): void {
   notifier = next
 }
 
+/**
+ * The suite's clock (iam-integration architecture §7): the host supplies the
+ * same clock to every member, or none. Trusted like a key: only the host's
+ * server code composes it, and no request can set or move it.
+ */
+export function provideProfileClock(next: ProfileClock): void {
+  if (typeof next?.now !== 'function') {
+    throw new TypeError('provideProfileClock expects an object with a now() function.')
+  }
+  clock = next
+}
+
+/** The host's clock, or the system clock when none is supplied. */
+export function useProfileClock(): ProfileClock {
+  return clock ?? systemProfileClock
+}
+
 export function useProfileRequestCoordinator(): ProfileRequestCoordinator {
   if (!requestCoordinator) throw new ProfileCompositionError('ProfileRequestCoordinator')
   return requestCoordinator
@@ -125,4 +146,5 @@ export function clearProfileComposition(): void {
   requestCoordinator = null
   accessDecision = null
   notifier = null
+  clock = null
 }

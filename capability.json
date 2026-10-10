@@ -70,6 +70,10 @@
     {
       "port": "ProfileNotifier",
       "optional": true
+    },
+    {
+      "port": "ProfileClock",
+      "optional": true
     }
   ],
   "integration": {

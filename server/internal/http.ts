@@ -14,7 +14,8 @@ import {
   UUID_PATTERN,
   UUID_V7_PATTERN,
 } from '../../contracts'
-import { useProfileSubjectResolver } from '../utils/profile-composition'
+import { useProfileClock, useProfileSubjectResolver } from '../utils/profile-composition'
+import { timeFrom } from './clock'
 
 /**
  * PRIVATE. The HTTP boundary of `/api/profile/*` (docs/contracts.md §12).
@@ -89,8 +90,12 @@ export async function requireSubject(event: H3Event): Promise<ProfileSubject> {
   return parsed.data
 }
 
-/** Refuses with `insufficient-assurance` unless the person signed in within `PROFILE_STEP_UP_SECONDS`. */
-export function requireRecentSignIn(subject: ProfileSubject, now: Date = new Date()): void {
+/**
+ * Refuses with `insufficient-assurance` unless the person signed in within
+ * `PROFILE_STEP_UP_SECONDS`, judged by the host's clock (`unavailable` if it
+ * answers an invalid time).
+ */
+export function requireRecentSignIn(subject: ProfileSubject, now: Date = timeFrom(useProfileClock())): void {
   const age = (now.getTime() - Date.parse(subject.authenticatedAt)) / 1000
   if (!(age >= -60 && age <= PROFILE_STEP_UP_SECONDS)) throw new ProfileFailure('insufficient-assurance')
 }

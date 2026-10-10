@@ -137,3 +137,16 @@ export interface ProfileNotifier {
     expiresInSeconds: number
   }): Promise<void>
 }
+
+/**
+ * Clock port (docs/contracts.md §16, iam-integration architecture §7): the
+ * current time. Optional; without it Profile uses the system clock. Every
+ * time Profile keeps or judges comes from it: timestamps, events'
+ * `occurredAt`, expiries, due dates, hold ends and whether a sign-in is
+ * recent. Trusted like a key, since it can make holds or expiries end
+ * early. An answer that is not a valid `Date`, or a failure, fails the
+ * operation closed as `unavailable`.
+ */
+export interface ProfileClock {
+  now(): Date
+}
