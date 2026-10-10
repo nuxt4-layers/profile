@@ -20,12 +20,13 @@ function uuidv7(): string {
  *   contact email to the group;
  * - `paused` shares the group but is paused;
  * - `stranger` shares nothing with the viewer, though named;
- * - `leaver` left `group`, which keeps leavers' names.
+ * - `leaver` left `group`, which keeps leavers' names;
+ * - the viewer left `formerGroup`.
  */
 export default defineEventHandler(async () => {
   if (process.env.PROFILE_PLAYGROUND_TEST !== '1') throw createError({ statusCode: 404 })
   await playground.ready
-  const [viewer, colleague, paused, stranger, leaver, group] = [uuidv7(), uuidv7(), uuidv7(), uuidv7(), uuidv7(), uuidv7()]
+  const [viewer, colleague, paused, stranger, leaver, group, formerGroup] = [uuidv7(), uuidv7(), uuidv7(), uuidv7(), uuidv7(), uuidv7(), uuidv7()]
 
   const named = async (subjectId: string, name: string, audiences: Partial<typeof DEFAULT_DISCLOSURE_SETTINGS.audiences> = {}) => {
     await updateProfile({ subjectId, changes: { name, email: `${name.split(' ')[0]!.toLowerCase()}@example.com` }, correlationId: randomUUID() })
@@ -56,5 +57,13 @@ export default defineEventHandler(async () => {
     data: { identityId: leaver, groupId: group, membershipId: uuidv7(), reason: 'left' },
   })
 
-  return { viewer, colleague, paused, stranger, leaver, group }
+  await applyProfileIdentityEvent({
+    eventId: uuidv7(),
+    type: 'membership.ended',
+    occurredAt: new Date().toISOString(),
+    correlationId: randomUUID(),
+    data: { identityId: viewer, groupId: formerGroup, membershipId: uuidv7(), reason: 'left' },
+  })
+
+  return { viewer, colleague, paused, stranger, leaver, group, formerGroup }
 })

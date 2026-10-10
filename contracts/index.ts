@@ -42,6 +42,7 @@ export type {
   DisplayName,
   DisplayNameSource,
   LookupPurpose,
+  MembershipState,
   Relationship,
   SubjectStanding,
 } from '../shared/disclosure'
@@ -51,6 +52,8 @@ export {
   DEPARTURE_ATTRIBUTIONS,
   disclosureContextSchema,
   disclosureSettingsSchema,
+  MEMBERSHIP_STATES,
+  standingInGroup,
   discloseAttributes,
   discloseDisplayName,
   DISCLOSURE_AUDIENCES,
@@ -66,7 +69,7 @@ export type { ProfileEvent, ProfileEventType } from '../shared/events'
 export { IDENTITY_EVENTS_HANDLED, PROFILE_EVENT_PAYLOADS, PROFILE_EVENT_TYPES, profileEventSchema } from '../shared/events'
 
 // HTTP API
-export type { ProfileOwnView, ProfilePersonView, ProfileSubject } from '../shared/api'
+export type { ProfileDepartureView, ProfileOwnView, ProfilePersonView, ProfileSubject } from '../shared/api'
 export {
   disclosureRequestSchema,
   displayNamesRequestSchema,
@@ -79,6 +82,55 @@ export {
   updateProfileRequestSchema,
 } from '../shared/api'
 
+// Data-subject requests and legal holds
+export type {
+  CoordinatedPart,
+  LegalHoldPart,
+  LegalHoldView,
+  OpenRequestInput,
+  PartStatus,
+  RequestOrigin,
+  RequestPart,
+  RequestPartView,
+  RequestStatus,
+  RequestType,
+  RequestView,
+} from '../shared/requests'
+export {
+  COORDINATED_PARTS,
+  DEFAULT_REQUEST_PARTS,
+  LEGAL_HOLD_PARTS,
+  legalHoldViewSchema,
+  openRequestSchema,
+  PART_STATUSES,
+  PERSON_REQUEST_TYPES,
+  personRequestSchema,
+  placeHoldSchema,
+  PROFILE_REQUEST_POLICY,
+  REQUEST_ORIGINS,
+  REQUEST_PARTS,
+  REQUEST_STATUSES,
+  REQUEST_TYPES,
+  requestDueAt,
+  requestPartViewSchema,
+  requestViewSchema,
+  settlePartSchema,
+} from '../shared/requests'
+
+// Contact-detail verification
+export type { VerifiableAttribute } from '../shared/verification'
+export {
+  confirmVerificationRequestSchema,
+  PROFILE_VERIFICATION_POLICY,
+  VERIFIABLE_ATTRIBUTES,
+  VERIFICATION_CHANNELS,
+  verificationCodeSchema,
+} from '../shared/verification'
+
+// Permissions (Authorisation's catalogue)
+export type { ProfilePermissionDefinition } from '../shared/permissions'
+export { PROFILE_PERMISSIONS, PROFILE_SUSPENDED_PEOPLE_PERMISSION } from '../shared/permissions'
+
 // Errors
 export type { ProfileErrorBody, ProfileErrorCode } from '../shared/errors'
 export { isProfileErrorCode, PROFILE_ERROR_CODES, PROFILE_ERROR_STATUS, ProfileCompositionError, ProfileFailure } from '../shared/errors'
@@ -88,10 +140,13 @@ export type {
   DirectoryReadOptions,
   IdentityEventLike,
   PostgresPoolLike,
+  ProfileAccessDecision,
   ProfileDatabase,
   ProfileDisclosureContextPort,
   ProfileEventPublisher,
   ProfileKeyWrapper,
+  ProfileNotifier,
+  ProfileRequestCoordinator,
   ProfileSubjectResolver,
   WrappedProfileKey,
 } from '../shared/ports'

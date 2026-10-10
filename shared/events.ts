@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import { PROFILE_ATTRIBUTES } from './attributes'
 import { correlationIdSchema, identifierSchema, instantSchema, reasonCodeSchema } from './identifiers'
+import { LEGAL_HOLD_PARTS, PART_STATUSES, REQUEST_ORIGINS, REQUEST_PARTS, REQUEST_TYPES } from './requests'
+import { VERIFIABLE_ATTRIBUTES } from './verification'
 
 /**
  * Profile's events (docs/contracts.md §8). Each is written to Profile's
@@ -22,6 +24,40 @@ const payloads = {
   'profile.departure-anonymised': z.strictObject({ identityId: id, groupId: id }),
   /** The record was erased and its key destroyed: drop every name cached for the identity. */
   'profile.anonymised': z.strictObject({ identityId: id, reasonCode: reasonCodeSchema }),
+  /** The person proved they receive messages at a contact detail. */
+  'profile.contact-verified': z.strictObject({ identityId: id, attribute: z.enum(VERIFIABLE_ATTRIBUTES) }),
+  /** A data-subject request was opened (§14). */
+  'profile.request-opened': z.strictObject({
+    requestId: id,
+    identityId: id,
+    type: z.enum(REQUEST_TYPES),
+    origin: z.enum(REQUEST_ORIGINS),
+    parts: z.array(z.enum(REQUEST_PARTS)).max(REQUEST_PARTS.length),
+    dueAt: instantSchema,
+  }),
+  /** Every part of a request is answered: each part's outcome, and the exemption claimed for any refused. */
+  'profile.request-completed': z.strictObject({
+    requestId: id,
+    identityId: id,
+    parts: z.array(z.strictObject({ part: z.enum(REQUEST_PARTS), status: z.enum(PART_STATUSES), reasonCode: reasonCodeSchema.nullable() })).max(REQUEST_PARTS.length),
+  }),
+  /** A request needs operators: it is near its due date, or a group's owners have not renamed it in time. */
+  'profile.request-escalated': z.strictObject({ requestId: id, identityId: id, reasonCode: reasonCodeSchema }),
+  /** A legal hold now defers the erasure of these parts. */
+  'profile.legal-hold-placed': z.strictObject({ holdId: id, identityId: id, parts: z.array(z.enum(LEGAL_HOLD_PARTS)).max(LEGAL_HOLD_PARTS.length), reasonCode: reasonCodeSchema, endsAt: instantSchema }),
+  /**
+   * A legal hold ended. `released`: the parts no hold covers any more;
+   * `identityClosed`: whether Identity has closed the identity, so the
+   * host's handler now carries out the erasures the hold deferred.
+   */
+  'profile.legal-hold-ended': z.strictObject({
+    holdId: id,
+    identityId: id,
+    parts: z.array(z.enum(LEGAL_HOLD_PARTS)).max(LEGAL_HOLD_PARTS.length),
+    released: z.array(z.enum(LEGAL_HOLD_PARTS)).max(LEGAL_HOLD_PARTS.length),
+    identityClosed: z.boolean(),
+    reasonCode: reasonCodeSchema,
+  }),
 } as const
 
 export type ProfileEventType = keyof typeof payloads
@@ -51,8 +87,11 @@ export const PROFILE_EVENT_PAYLOADS: Readonly<Record<ProfileEventType, z.ZodType
 
 /**
  * The Identity events Profile acts on: a record for each new identity, a
- * departure snapshot when a membership ends, and erasure when an identity
- * closes. Profile reads pausing and suspension from the disclosure-context
- * port at each lookup instead, so it never shows a stale standing.
+ * departure snapshot when a membership ends, erasure when an identity
+ * closes (unless held), and the evidence that completes parts of
+ * data-subject requests (`identity.paused` for a restriction,
+ * `group.renamed` for a correction). Profile reads pausing and suspension
+ * from the disclosure-context port at each lookup, so it never shows a
+ * stale standing.
  */
-export const IDENTITY_EVENTS_HANDLED = Object.freeze(['identity.provisioned', 'membership.ended', 'identity.closed'] as const)
+export const IDENTITY_EVENTS_HANDLED = Object.freeze(['identity.provisioned', 'membership.ended', 'identity.closed', 'identity.paused', 'group.renamed'] as const)

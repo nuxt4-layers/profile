@@ -7,9 +7,11 @@ import { safeNameSchema } from './safe-names'
  * item 17). Profile is their only canonical source: Authentication never
  * stores or seeds them.
  *
- * Contact details are independent of Authentication's sign-in identifiers,
- * and are never verified in this contract version: `email_verified` and
- * `phone_number_verified` are always false, and Profile never sends to them.
+ * Contact details are independent of Authentication's sign-in identifiers.
+ * They are stored unverified (`email_verified` and `phone_number_verified`
+ * false) until the person types back a code Profile sent through the host's
+ * notification port (§15), and become unverified again whenever they change.
+ * Profile sends nothing else to them.
  */
 
 export const PROFILE_ATTRIBUTES = [
@@ -60,8 +62,8 @@ export type ProfileChanges = z.input<typeof profileChangesSchema>
 /** The record as held: every attribute optional, plus the OIDC verification claims. */
 export const profileAttributesSchema = z.strictObject({
   ...Object.fromEntries(PROFILE_ATTRIBUTES.map(key => [key, z.string().optional()])) as { [K in ProfileAttribute]: z.ZodOptional<z.ZodString> },
-  email_verified: z.literal(false).optional(),
-  phone_number_verified: z.literal(false).optional(),
+  email_verified: z.boolean().optional(),
+  phone_number_verified: z.boolean().optional(),
 })
 
 export type ProfileAttributes = z.infer<typeof profileAttributesSchema>

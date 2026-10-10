@@ -12,6 +12,7 @@ const props = defineProps<{ me: ProfileOwnView }>()
 const emit = defineEmits<{ updated: [view: ProfileOwnView], reload: [] }>()
 
 const profile = useProfile()
+const routes = useProfileRoutes()
 const action = useProfileAction()
 const { t } = action
 const notice = ref<string | null>(null)
@@ -67,6 +68,7 @@ async function save() {
           <span :class="profileClasses.text">{{ t('profile.disclosure.anonymiseOnDeparture') }}</span>
         </label>
         <p id="profile-departure-hint" :class="profileClasses.hint">{{ t('profile.disclosure.anonymiseOnDepartureHint') }}</p>
+        <p v-if="routes.departures()"><NuxtLink :to="routes.departures()!" :class="profileClasses.actionLink">{{ t('profile.disclosure.departuresLink') }}</NuxtLink></p>
       </fieldset>
 
       <div :class="profileClasses.row">

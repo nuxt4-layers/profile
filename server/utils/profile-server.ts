@@ -1,9 +1,30 @@
-import type { DisplayName, IdentityEventLike, ProfileAttributes, ProfileEventPublisher } from '../../contracts'
+import type {
+  DisplayName,
+  IdentityEventLike,
+  LegalHoldPart,
+  LegalHoldView,
+  LookupPurpose,
+  OpenRequestInput,
+  ProfileAttributes,
+  ProfileDepartureView,
+  ProfileEventPublisher,
+  ProfileSubject,
+  RequestPart,
+  RequestView,
+  VerifiableAttribute,
+} from '../../contracts'
 import { ProfileFailure } from '../../contracts'
 import { runProfileMigrations } from '../database/migrations'
 import type { DepartureExport, OwnProfile } from '../internal/service'
 import { createService } from '../internal/service'
-import { useProfileDatabase, useProfileDisclosureContext, useProfileKeyWrapper } from './profile-composition'
+import {
+  useProfileAccessDecision,
+  useProfileDatabase,
+  useProfileDisclosureContext,
+  useProfileKeyWrapper,
+  useProfileNotifier,
+  useProfileRequestCoordinator,
+} from './profile-composition'
 
 /**
  * PUBLIC server functions (auto-imported for the host's server code). Each
@@ -31,7 +52,15 @@ export function migrateProfileDatabase(): Promise<string[]> {
 async function service() {
   if (migration) await migration.catch(() => { throw new ProfileFailure('unavailable', 'migrations failed') })
   const database = useProfileDatabase()
-  return createService({ pool: database.pool, schema: database.schema, keys: useProfileKeyWrapper(), disclosure: useProfileDisclosureContext })
+  return createService({
+    pool: database.pool,
+    schema: database.schema,
+    keys: useProfileKeyWrapper(),
+    disclosure: useProfileDisclosureContext,
+    coordinator: useProfileRequestCoordinator,
+    accessDecision: useProfileAccessDecision,
+    notifier: useProfileNotifier,
+  })
 }
 
 /** The person's own record and disclosure settings; null once erased. */
@@ -59,8 +88,13 @@ export async function consumeProfileLookup(input: { viewerId: string }): Promise
   return (await service()).consumeLookup(input)
 }
 
-/** Display names for up to 200 people as the viewer may see them, for attribution or a listing. */
-export async function lookupProfileDisplayNames(input: { viewerId: string, subjectIds: string[], groupId?: string | null, purpose: 'attribution' | 'listing' }): Promise<{ subjectId: string, displayName: DisplayName }[]> {
+/**
+ * Display names for up to 200 people as the viewer may see them, for
+ * attribution, a listing, or a group's administration listing. The last
+ * needs the group and the signed-in `subject` (the viewer), for
+ * Authorisation's decision on naming suspended members.
+ */
+export async function lookupProfileDisplayNames(input: { viewerId: string, subjectIds: string[], groupId?: string | null, purpose: LookupPurpose, subject?: ProfileSubject }): Promise<{ subjectId: string, displayName: DisplayName }[]> {
   return (await service()).displayNames(input)
 }
 
@@ -97,4 +131,83 @@ export async function profileKeyVersionsInUse(): Promise<{ version: string, keys
 /** Publishes pending outbox events in order, through the host's publisher. */
 export async function relayProfileOutbox(input: { publish: ProfileEventPublisher, limit?: number }): Promise<number> {
   return (await service()).relayOutbox(input)
+}
+
+/** The groups the person has left (identifiers, dates, whether they chose anonymity there). */
+export async function listProfileDepartures(input: { subjectId: string }): Promise<ProfileDepartureView[]> {
+  return (await service()).departures(input)
+}
+
+// ---------------------------------------------------------------------------
+// Data-subject requests and legal holds (docs/contracts.md §14). Operators'
+// functions are server-only: never expose them over HTTP.
+// ---------------------------------------------------------------------------
+
+/** Opens a data-subject request: the person's (access, restriction) or an operator's (any type, with a reason code). */
+export async function openProfileRequest(input: OpenRequestInput): Promise<RequestView> {
+  return (await service()).openRequest(input)
+}
+
+/** The person's requests, newest first. */
+export async function listProfileRequests(input: { subjectId: string }): Promise<RequestView[]> {
+  return (await service()).listRequests(input)
+}
+
+/** One request, for an operator; null when unknown. */
+export async function getProfileRequest(input: { requestId: string }): Promise<RequestView | null> {
+  return (await service()).getRequest(input)
+}
+
+/** The archive of the person's completed access request, while it lasts. */
+export async function getProfileRequestArchive(input: { subjectId: string, requestId: string }) {
+  return (await service()).archive(input)
+}
+
+/** An operator settles a part by hand: `done`, or `exempt` with a reason code. */
+export async function settleProfileRequestPart(input: { requestId: string, part: RequestPart, outcome: 'done' | 'exempt', reasonCode?: string | null, correlationId: string }): Promise<RequestView> {
+  return (await service()).settlePart(input)
+}
+
+/** For iam-integration's handler: another member's erasure is done. */
+export async function recordProfileRequestPart(input: { identityId: string, part: 'authentication' | 'authorisation', correlationId: string }): Promise<void> {
+  return (await service()).recordRequestPart(input)
+}
+
+/** An operator places a legal hold on parts of a person's data. */
+export async function placeProfileLegalHold(input: { identityId: string, parts: LegalHoldPart[], reasonCode: string, endsAt: string, correlationId: string }): Promise<LegalHoldView> {
+  return (await service()).placeHold(input)
+}
+
+/** An operator releases a legal hold before its end date. */
+export async function releaseProfileLegalHold(input: { holdId: string, reasonCode: string, correlationId: string }): Promise<void> {
+  return (await service()).releaseHold(input)
+}
+
+/** The parts under legal hold now, for iam-integration's closure handler (`heldParts`). */
+export async function profileLegalHoldParts(identityId: string): Promise<LegalHoldPart[]> {
+  return (await service()).heldParts({ identityId })
+}
+
+/** A person's legal holds, current and past, for operators. */
+export async function listProfileLegalHolds(input: { identityId: string }): Promise<LegalHoldView[]> {
+  return (await service()).listHolds(input)
+}
+
+/** Maintenance for requests, holds and verification codes. Schedule it every few minutes. */
+export async function runProfileMaintenance() {
+  return (await service()).maintain()
+}
+
+// ---------------------------------------------------------------------------
+// Contact-detail verification (docs/contracts.md §15)
+// ---------------------------------------------------------------------------
+
+/** Sends a verification code to the person's contact detail through the host's notifier. */
+export async function startProfileContactVerification(input: { subjectId: string, attribute: VerifiableAttribute, correlationId: string }) {
+  return (await service()).startVerification(input)
+}
+
+/** The person types back the code; the detail is verified until it changes. */
+export async function confirmProfileContactVerification(input: { subjectId: string, attribute: VerifiableAttribute, code: string, correlationId: string }): Promise<OwnProfile> {
+  return (await service()).confirmVerification(input)
 }

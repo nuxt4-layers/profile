@@ -108,8 +108,33 @@ describe('Attributes', () => {
     expect(changes({ email_verified: true }).success).toBe(false)
   })
 
-  it('never holds a verified contact detail in this contract version', () => {
-    expect(contracts.profileAttributesSchema.safeParse({ email: 'ada@example.com', email_verified: true }).success).toBe(false)
+  it('holds a contact detail as verified only through verification: never set by a change', () => {
+    expect(contracts.profileAttributesSchema.safeParse({ email: 'ada@example.com', email_verified: true }).success).toBe(true)
     expect(contracts.profileAttributesSchema.safeParse({ email: 'ada@example.com', email_verified: false }).success).toBe(true)
+    expect(changes({ phone_number_verified: true }).success).toBe(false)
+    expect(contracts.VERIFIABLE_ATTRIBUTES).toEqual(['email', 'phone_number'])
+    expect(contracts.PROFILE_VERIFICATION_POLICY).toMatchObject({ codeDigits: 6, codeSeconds: 600, attempts: 5, sends: 5 })
+  })
+
+  it('names Profile\'s one permission at high risk, so no wildcard reaches it', () => {
+    expect(contracts.PROFILE_PERMISSIONS).toEqual([{ name: 'profile.suspended-people:view', description: expect.any(String), risk: 'high', effect: 'view' }])
+  })
+
+  it('records requests and holds by identifiers, codes and times only', () => {
+    const at = '2026-10-09T12:00:00.000Z'
+    const ids = { eventId: '01928c4e-0000-7000-8000-000000000001', occurredAt: at, correlationId: '01928c4e-0000-7000-8000-0000000000aa' }
+    const identityId = '01928c4e-0000-7000-8000-000000000002'
+    const requestId = '01928c4e-0000-7000-8000-000000000003'
+    expect(contracts.profileEventSchema.safeParse({ ...ids, type: 'profile.request-opened', data: { requestId, identityId, type: 'access', origin: 'person', parts: ['profile'], dueAt: at } }).success).toBe(true)
+    expect(contracts.profileEventSchema.safeParse({ ...ids, type: 'profile.request-escalated', data: { requestId, identityId, reasonCode: 'Ada asked twice' } }).success).toBe(false)
+    expect(contracts.profileEventSchema.safeParse({ ...ids, type: 'profile.legal-hold-ended', data: { holdId: requestId, identityId, parts: ['profile'], released: ['profile'], identityClosed: true, reasonCode: 'expired' } }).success).toBe(true)
+    expect(contracts.profileEventSchema.safeParse({ ...ids, type: 'profile.contact-verified', data: { identityId, attribute: 'email', value: 'ada@example.com' } }).success).toBe(false)
+    expect(contracts.IDENTITY_EVENTS_HANDLED).toEqual(['identity.provisioned', 'membership.ended', 'identity.closed', 'identity.paused', 'group.renamed'])
+  })
+
+  it('dates a request a calendar month on, or to the month\'s last day', () => {
+    expect(contracts.requestDueAt(new Date('2026-10-10T08:00:00.000Z')).toISOString()).toBe('2026-11-10T08:00:00.000Z')
+    expect(contracts.requestDueAt(new Date('2027-01-31T08:00:00.000Z')).toISOString()).toBe('2027-02-28T08:00:00.000Z')
+    expect(contracts.requestDueAt(new Date('2026-12-15T00:00:00.000Z')).toISOString()).toBe('2027-01-15T00:00:00.000Z')
   })
 })

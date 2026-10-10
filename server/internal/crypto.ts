@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
+import { createCipheriv, createDecipheriv, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto'
 
 /**
  * PRIVATE. Authenticated encryption of a person's attributes with their own
@@ -40,6 +40,29 @@ export const aad = {
   record: (identityId: string) => `profile:record:v1:${identityId}`,
   departureName: (identityId: string, groupId: string) => `profile:departure-name:v1:${identityId}:${groupId}`,
   wrappedKey: (identityId: string) => `profile:data-key:v1:${identityId}`,
+  requestPart: (identityId: string, requestId: string, part: string) => `profile:request-part:v1:${identityId}:${requestId}:${part}`,
+}
+
+/** A one-time code of `digits` decimal digits, uniformly random. */
+export function newCode(digits: number): string {
+  return String(randomInt(0, 10 ** digits)).padStart(digits, '0')
+}
+
+/**
+ * A verification code's digest, keyed with the person's own data key and
+ * bound to the identity, the attribute and the value it was sent to: a
+ * stored digest says nothing without the key, and a code sent to one value
+ * never verifies another.
+ */
+export function codeDigest(key: Uint8Array, input: { identityId: string, attribute: string, value: string, code: string }): Buffer {
+  return createHmac('sha256', key)
+    .update(`profile:contact-verification:v1:${input.identityId}:${input.attribute}:${JSON.stringify(input.value)}:${input.code}`)
+    .digest()
+}
+
+/** Compares two digests in constant time. */
+export function sameDigest(a: Uint8Array, b: Uint8Array): boolean {
+  return a.length === b.length && timingSafeEqual(a, b)
 }
 
 /** A UUIDv7 (RFC 9562): 48-bit Unix milliseconds, version 7, variant 10, random bits. */

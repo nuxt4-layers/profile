@@ -17,6 +17,10 @@ export interface ProfilePagePaths {
   profile: string
   /** Another person's profile, as the viewer may see it. Must contain `:subjectId`. */
   person: string
+  /** The groups the person has left, to choose anonymity in one of them. */
+  departures: string
+  /** The person's data-subject requests. */
+  requests: string
 }
 
 export interface ProfileModuleOptions {
@@ -31,6 +35,8 @@ export interface ProfileModuleOptions {
 const PAGES: { key: keyof ProfilePagePaths, file: string, parameter?: string }[] = [
   { key: 'profile', file: 'OwnProfilePage.vue' },
   { key: 'person', file: 'PersonPage.vue', parameter: ':subjectId' },
+  { key: 'departures', file: 'DeparturesPage.vue' },
+  { key: 'requests', file: 'RequestsPage.vue' },
 ]
 
 export default defineNuxtModule<ProfileModuleOptions>({
@@ -42,6 +48,8 @@ export default defineNuxtModule<ProfileModuleOptions>({
       paths: {
         profile: '/profile',
         person: '/profile/people/:subjectId',
+        departures: '/profile/departures',
+        requests: '/profile/requests',
       },
     },
   },

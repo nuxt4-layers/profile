@@ -5,6 +5,7 @@
  * never leaves the browser except as the person's own file.
  */
 const profile = useProfile()
+const routes = useProfileRoutes()
 const action = useProfileAction()
 const { t } = action
 const notice = ref<string | null>(null)
@@ -36,6 +37,10 @@ async function download() {
       <div :class="profileClasses.row">
         <button type="button" :class="profileClasses.secondaryButton" :disabled="action.disabled.value" @click="download">{{ t('profile.export.download') }}</button>
       </div>
+      <p v-if="routes.requests()" :class="profileClasses.text">
+        {{ t('profile.export.requestsExplained') }}
+        <NuxtLink :to="routes.requests()!" :class="profileClasses.link">{{ t('profile.export.requestsLink') }}</NuxtLink>
+      </p>
     </div>
   </section>
 </template>

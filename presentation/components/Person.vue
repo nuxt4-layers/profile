@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { PROFILE_ATTRIBUTES, STEP_UP_ATTRIBUTES, UUID_V7_PATTERN } from '../../contracts'
+import { PROFILE_ATTRIBUTES, STEP_UP_ATTRIBUTES, UUID_V7_PATTERN, VERIFICATION_CLAIMS } from '../../contracts'
 
 /**
  * PUBLIC. Another person's profile, as the signed-in viewer may see it now:
@@ -36,7 +36,10 @@ const contact = computed(() => shown.value.some(key => STEP_UP_ATTRIBUTES.includ
       <dl v-else :class="profileClasses.definitions">
         <template v-for="key in shown" :key="key">
           <dt :class="profileClasses.term">{{ t(`profile.attribute.${key}`) }}</dt>
-          <dd :class="profileClasses.definition">{{ person.attributes[key] }}</dd>
+          <dd :class="profileClasses.definition">
+            {{ person.attributes[key] }}
+            <span v-if="VERIFICATION_CLAIMS[key] && person.attributes[VERIFICATION_CLAIMS[key]!] === true" :class="profileClasses.badge" class="ml-2">{{ t('profile.verification.verified') }}</span>
+          </dd>
         </template>
       </dl>
       <p v-if="contact" :class="profileClasses.muted" class="mt-3">{{ t('profile.person.contactNotice') }}</p>

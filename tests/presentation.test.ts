@@ -6,7 +6,11 @@ import {
   DISCLOSURE_AUDIENCES,
   DISPLAY_NAME_SOURCES,
   PROFILE_ATTRIBUTES,
+  PART_STATUSES,
   PROFILE_ERROR_CODES,
+  REQUEST_PARTS,
+  REQUEST_STATUSES,
+  REQUEST_TYPES,
   SAFE_NAME_PROBLEMS,
   attributeSchemas,
 } from '../contracts'
@@ -118,12 +122,16 @@ describe('text', () => {
       ...PROFILE_ATTRIBUTES.map(attribute => `profile.attribute.${attribute}`),
       ...DISCLOSURE_AUDIENCES.map(audience => `profile.audience.${audience}`),
       ...DISPLAY_NAME_SOURCES.map(source => `profile.disclosure.displayNameSource.${source}`),
+      ...REQUEST_TYPES.map(type => `profile.requests.type.${type}`),
+      ...REQUEST_STATUSES.map(status => `profile.requests.status.${status}`),
+      ...REQUEST_PARTS.map(part => `profile.requests.part.${part}`),
+      ...PART_STATUSES.map(status => `profile.requests.partStatus.${status}`),
     ]
     expect(keys.filter(key => !has(key))).toEqual([])
   })
 
   it('words every problem the contract\'s rules can name', () => {
-    const problems = new Set<string>([...SAFE_NAME_PROBLEMS, 'version-changed', 'no-changes'])
+    const problems = new Set<string>([...SAFE_NAME_PROBLEMS, 'version-changed', 'no-changes', 'invalid-code', 'wrong-code', 'code-expired', 'nothing-to-verify', 'invalid-attribute'])
     const samples: Record<string, string[]> = {
       name: ['', 'x'.repeat(201), 'a​b', 'Aлександр'],
       preferred_username: ['x'.repeat(65)],

@@ -1,4 +1,14 @@
-import type { DisclosureSettings, DisplayName, LookupPurpose, ProfileChanges, ProfileOwnView, ProfilePersonView } from '../../contracts'
+import type {
+  DisclosureSettings,
+  DisplayName,
+  LookupPurpose,
+  ProfileChanges,
+  ProfileDepartureView,
+  ProfileOwnView,
+  ProfilePersonView,
+  RequestView,
+  VerifiableAttribute,
+} from '../../contracts'
 import { PROFILE_API_PREFIX } from '../../contracts'
 
 /**
@@ -29,5 +39,14 @@ export function useProfile() {
       request(at('/display-names'), { method: 'POST', body: { subjectIds, groupId, purpose } }) as Promise<{ subjectId: string, displayName: DisplayName }[]>,
     person: (subjectId: string, groupId?: string) =>
       request(at(`/people/${subjectId}`), { query: groupId ? { groupId } : undefined }) as Promise<ProfilePersonView>,
+    departures: () => request(at('/me/departures'), {}) as Promise<{ departures: ProfileDepartureView[] }>,
+    requests: () => request(at('/me/requests'), {}) as Promise<{ requests: RequestView[] }>,
+    openRequest: (type: 'access' | 'restriction') =>
+      request(at('/me/requests'), { method: 'POST', body: { type } }) as Promise<RequestView>,
+    requestArchive: (requestId: string) => request(at(`/me/requests/${requestId}/archive`), {}) as Promise<unknown>,
+    sendVerification: (attribute: VerifiableAttribute) =>
+      request(at(`/me/verification/${attribute}/send`), { method: 'POST' }) as Promise<{ attribute: VerifiableAttribute, status: 'sent' | 'verified', expiresAt: string | null }>,
+    confirmVerification: (attribute: VerifiableAttribute, code: string) =>
+      request(at(`/me/verification/${attribute}/confirm`), { method: 'POST', body: { code } }) as Promise<ProfileOwnView>,
   }
 }

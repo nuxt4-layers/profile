@@ -2,12 +2,18 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { ProfileCompositionError } from '../contracts'
 import {
   clearProfileComposition,
+  provideProfileAccessDecision,
   provideProfileDatabase,
   provideProfileDisclosureContext,
   provideProfileKeyWrapper,
+  provideProfileNotifier,
+  provideProfileRequestCoordinator,
+  useProfileAccessDecision,
   useProfileDatabase,
   useProfileDisclosureContext,
   useProfileKeyWrapper,
+  useProfileNotifier,
+  useProfileRequestCoordinator,
 } from '../server/utils/profile-composition'
 
 describe('composition', () => {
@@ -17,6 +23,9 @@ describe('composition', () => {
     expect(() => useProfileDatabase()).toThrow(ProfileCompositionError)
     expect(() => useProfileKeyWrapper()).toThrow(ProfileCompositionError)
     expect(() => useProfileDisclosureContext()).toThrow(ProfileCompositionError)
+    expect(() => useProfileRequestCoordinator()).toThrow(ProfileCompositionError)
+    expect(() => useProfileAccessDecision()).toThrow(ProfileCompositionError)
+    expect(() => useProfileNotifier()).toThrow(ProfileCompositionError)
   })
 
   it('validates what the host supplies', () => {
@@ -27,5 +36,8 @@ describe('composition', () => {
     expect(useProfileDatabase().schema).toBe('profile')
     expect(() => provideProfileKeyWrapper({} as never)).toThrow(TypeError)
     expect(() => provideProfileDisclosureContext({} as never)).toThrow(TypeError)
+    expect(() => provideProfileRequestCoordinator({} as never)).toThrow(TypeError)
+    expect(() => provideProfileAccessDecision({} as never)).toThrow(TypeError)
+    expect(() => provideProfileNotifier({} as never)).toThrow(TypeError)
   })
 })
