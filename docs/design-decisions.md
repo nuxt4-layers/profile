@@ -36,3 +36,11 @@ Each person's attributes are encrypted with their own data key, which Profile st
 - **Recent sign-in:** for the data export (as the data-subject process requires) and for changing a contact detail. Names, locale, time zone and disclosure settings can be changed in any signed-in session. Requiring it for every change was considered and rejected as too frequent an interruption.
 - **No erasure endpoint:** erasure follows account closure, or an operator acting on a verified request, so there is one path, as the data-subject process describes. The person can remove any attribute themselves.
 - **Lost updates:** each change carries the version it was made against, and a stale one is refused. Last write wins was considered; it lets one tab undo another's edit silently.
+
+## 9. The default pages (phase 3)
+
+- **Which pages:** the person's own profile, one page with sections for details, disclosure and the download, and a page for another person's profile as the viewer may see it. Separate pages per area were considered; one page keeps the record's version in one place, so the sections never undo each other. Leaving the person page to hosts was considered; every host would rebuild the same disclosure-bound view.
+- **The person-name component:** `ProfilePersonName` takes the identifier, the group in view and the purpose as props, and the host's `IdentityPersonName` is a thin wrapper that passes Identity's route through. Profile overriding `IdentityPersonName` itself was considered and rejected: it would tie Profile to Identity's component name and to the order of layers, against the rule that members never import one another.
+- **Links from names:** optional and off by default, and only for a disclosed name while the person page is on; a fallback ("Member", "Former member") never links, so a link says nothing about who exists. Always linking was considered; it spends lookups on pages that only list names.
+- **The document title** of the person page stays "Profile", never the name, so names do not reach browser history, tab lists or analytics through it.
+- **Departure anonymity in one group:** the setting for every future departure is on the page; choosing it for one group already left needs that group's name, which is Identity's, and follows in phase 4 with the requests.

@@ -141,7 +141,7 @@ The caller supplies `subjectId` and `viewerId` from the signed-in principal, nev
 
 ## 11. Versioning
 
-This is contract version 1, provided by package 0.2. Before 1.0, breaking changes are listed here and in the release notes. Package 0.2 adds the HTTP API (§12), record versions, the `insufficient-assurance`, `conflict` and `rate-limited` codes and the subject-resolver port, without changing what version 0.1 provided.
+This is contract version 1, provided by package 0.3. Before 1.0, breaking changes are listed here and in the release notes. Package 0.2 adds the HTTP API (§12), record versions, the `insufficient-assurance`, `conflict` and `rate-limited` codes and the subject-resolver port, without changing what version 0.1 provided. Package 0.3 adds the presentation (§13), without changing the contract.
 
 ## 12. HTTP API
 
@@ -163,6 +163,40 @@ Each viewer may make `PROFILE_LOOKUP_RATE_LIMIT` lookups (60 a minute, each up t
 
 There is no erasure endpoint: erasure follows account closure (Identity's process), or an operator's `eraseProfile` on a verified request. The person can remove any attribute themselves.
 
-`useProfile()` is the client side of this API, for the user experience only: it decides nothing.
+`useProfile()` is the client side of this API, for the user experience only: it decides nothing. The default pages (§13) use it and nothing else.
 
 Responses are never for another person than the one asked for: a hidden answer is the same whether or not the person exists.
+
+## 13. Presentation
+
+The layer registers default pages and `Profile*` components (`modules/presentation.ts`), which a host configures in its `nuxt.config.ts` under `profile`:
+
+| Page | Default path | Shows |
+|---|---|---|
+| `profile` | `/profile` | The signed-in person's own profile: their details, who sees each, the name others see, their departure choice, and a download of their data |
+| `person` | `/profile/people/:subjectId` | Another person's display name and the details they disclose to the viewer, now. `?groupId=` names the group in view, so a leaver is shown under its departure data policy |
+
+`profile: { pages: { paths: { ... } } }` moves the pages (the person path must keep `:subjectId`); `profile: { pages: { enabled: false } }` keeps the components without the pages; `profile: { presentation: false }` registers nothing. Every page is sent with `X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'`, `Referrer-Policy: no-referrer` and `Cache-Control: no-store`, unless the host sets those headers itself. The person page's document title is always "Profile": a name never reaches the browser's history or tab list from it.
+
+**What the pages decide: nothing.** They call `useProfile()` and show what the server answers; every change is decided again on the server. Fields are checked first with the contract's own `attributeSchemas`, so a problem is shown on its field; changes are sent against the version shown, and a `conflict` reloads the record. Contact-detail changes and the download ask for a recent sign-in when the server answers `insufficient-assurance`, with a link to sign in again. There is no erasure on any page (§12). An unknown person, one hidden from the viewer and a malformed identifier read alike: "This profile is not available to you."
+
+**Names.** `ProfilePersonName` shows one person's name as Profile discloses it to the signed-in viewer:
+
+| Prop | Default | Meaning |
+|---|---|---|
+| `identityId` | — | Identity's identifier |
+| `groupId` | `null` | The group the name is shown in, for the departure data policy |
+| `purpose` | `listing` | `listing` leaves out a paused person; `attribution` keeps them named (§5) |
+| `link` | `false` | Links a disclosed name to the person page, when that page is on. A fallback never links |
+
+It renders "Member" on the server and until the answer arrives, and whenever Profile shows nothing, the same whether or not the person exists; "Former member N" and "Former member" come from the codes. Lookups go through `useProfileNames()`, in the browser only: every name a page asks for in one tick, for one group and purpose, is one request (up to 200 people) against the rate limit (§12); answers are kept for a minute and dropped by `forgetProfileNames()`, which a host calls when the viewer signs in or out. Identity's pages name people through `IdentityPersonName`; a host backs it with a component of that name that passes `identityId` and the group in view to `ProfilePersonName`, so neither layer imports the other.
+
+**Text.** Every word comes from `presentation/messages.ts` (en-GB) through `useProfileText()`. Hosts change wording or add locales in `app.config.ts` under `profile.messages`, set the locale with `NUXT_PUBLIC_PROFILE_LOCALE`, and point `profile.routes.signIn` (`NUXT_PUBLIC_PROFILE_ROUTES_SIGN_IN`) at their sign-in page, to which the pages link with `?redirect=`. Validation failures and conflicts are explained from the error's `reason` (`profile.reason.*`), otherwise from its code.
+
+**Styling.** The pages style only through Theme Manager's SemanticPresentationTheme vocabulary (`profileClasses`), its public `presentation.css` and its size scales, never raw colours or Tailwind's default sizes; a host imports `@nuxt4-layers/profile/tailwind.css` after Theme Manager's stylesheet. Fill, Pen and Edge of one surface share role and state. The deliberate exceptions, the same as Identity's and Authentication's, which a host's theme must keep legible:
+
+- `pen-muted-default` on `fill-base-default`: hints, notes and definition terms on the card;
+- `edge-error-default` on `fill-input-default`: an invalid field's border;
+- `edge-base-active` on `fill-base-default`: the keyboard focus indicator.
+
+**Accessibility.** WCAG 2.2 AA: landmarks and one `h1` per page, labelled sections, fieldsets and fields, errors announced and focused (the first invalid field takes focus), status messages announced politely, keyboard operation throughout, 24-pixel targets, reflow at 320 CSS pixels. Browser tests (`tests/e2e/pages.spec.ts`) run axe's WCAG 2.2 AA rules and check non-text contrast with Theme Manager's real styles.

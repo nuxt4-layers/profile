@@ -43,13 +43,17 @@ Profile holds the personal data that describes people, so its first duty is that
 | T20 | Bulk harvesting of names through the lookup endpoints | Answers gated by Identity's relationships and uniform for unknown people; 60 lookups a minute per viewer, counted in the database | `tests/http.test.ts` "limits each viewer's lookups" | Implemented |
 | T21 | Lost updates between tabs or devices | Changes carry the version they were made against; a stale one is refused with `conflict` | `tests/http.test.ts` "refusing a stale version" | Implemented |
 | T22 | Values leaking in error responses | Errors carry codes only; validation problems as codes, never the value | `tests/http.test.ts` "validates bodies strictly" | Implemented |
+| T23 | The pages show or decide more than the server allows | The pages decide nothing: they reach the server only through `useProfile()`; fields are checked with the contract's schemas and again on the server; no erasure on any page | `tests/presentation.test.ts` "reach the server only through useProfile()", "never offer erasure"; `tests/e2e/pages.spec.ts` | Implemented (phase 3) |
+| T24 | Clickjacking, cached pages or leaked paths expose a person's data | Every page is sent with `X-Frame-Options: DENY`, `frame-ancestors 'none'`, `Cache-Control: no-store` and `Referrer-Policy: no-referrer` | `tests/e2e/pages.spec.ts` "protects every page" | Implemented (phase 3) |
+| T25 | Names leak through the browser: titles, history, a shared cache, or a link that reveals who exists | The person page's title is generic; display names are looked up in the browser only, per viewer, never cached on the server, kept a minute and dropped by `forgetProfileNames()`; unknown, hidden and malformed people read alike, and only disclosed names link | `tests/presentation.test.ts` "keep names out of the document title"; `tests/e2e/pages.spec.ts` "shows another person only what they disclose", "names people by what Profile discloses" | Implemented (phase 3) |
+| T26 | Pages unusable by people with disabilities | WCAG 2.2 AA: axe in CI, keyboard journeys, focus on errors, reflow at 320 pixels, non-text contrast with Theme Manager's real styles; colours only through the semantic vocabulary | `tests/e2e/pages.spec.ts`; `tests/presentation.test.ts` "semantic presentation" | Implemented (phase 3) |
 | T16 | Supply-chain compromise | Minimal dependencies (`zod`); `minimumReleaseAge`, `blockExoticSubdeps`, frozen lockfile, dependency review | `pnpm-workspace.yaml`, workflows | Implemented |
 
 ## 4. Gaps and risk treatments
 
 | Gap | Risk | Treatment |
 |---|---|---|
-| No default pages yet | Hosts build their own profile pages on the API | Phase 3 |
+| No page to choose anonymity in one group already left | A leaver who did not set `anonymiseOnDeparture` beforehand needs the host or the API to anonymise them in that group | The endpoint exists; a page follows in phase 4, with the groups' names from Identity |
 | No administrator view of suspended people | Administrators who need to know cannot see a suspended person's name | Hidden from everyone for now (the safer reading); a later phase asks Authorisation |
 | Data-subject request coordination, legal holds | Erasure and export are per-member functions only | Later phase, with iam-integration's process |
 | Contact details unverified | Cannot be used for notification | By design until a notification port exists |
