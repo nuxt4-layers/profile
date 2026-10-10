@@ -12,7 +12,9 @@
  * a disposable database, takes the signed-in identity from the
  * `profile_playground_principal` cookie (and, if set, the sign-in time from
  * `profile_playground_signed_in_at`), standing in for Authentication, and
- * answers relationships the seed endpoint records:
+ * answers relationships the seed endpoint records. The other members' parts
+ * of an access request and the notifier are stand-ins too: the notifier
+ * keeps the last code for the tests, never delivering it.
  * - PROFILE_MIGRATION_DATABASE_URL  the migration role's connection
  * - PROFILE_DATABASE_URL            the runtime role's connection
  * - PROFILE_RUNTIME_ROLE            the runtime role's name
@@ -32,9 +34,11 @@ export interface PlaygroundState {
   standings: Map<string, SubjectStanding>
   /** groupId → the group's departure attribution. */
   departurePolicies: Map<string, DepartureAttribution>
+  /** The last verification code "sent" (test mode only). */
+  lastCode: string | null
 }
 
-export const playground: PlaygroundState = { ready: Promise.resolve(), relationships: new Map(), standings: new Map(), departurePolicies: new Map() }
+export const playground: PlaygroundState = { ready: Promise.resolve(), relationships: new Map(), standings: new Map(), departurePolicies: new Map(), lastCode: null }
 
 export default defineNitroPlugin(() => {
   provideProfileKeyWrapper(createLocalProfileKeyWrapper({
@@ -71,6 +75,27 @@ export default defineNitroPlugin(() => {
         })),
         readAt: new Date().toISOString(),
       }
+    },
+  })
+
+  // A host composes iam-integration's profileRequestCoordinatorFromMembers
+  // over Identity, Authentication and Authorisation here; the stand-in
+  // answers for each with an empty bundle.
+  provideProfileRequestCoordinator({
+    async exportPart({ identityId, part }) {
+      return { member: part, identityId, note: 'playground stand-in' }
+    },
+  })
+
+  // A host composes iam-integration's profileAccessDecisionFromAuthorisation here.
+  provideProfileAccessDecision({ async allows() { return false } })
+
+  // A host delivers the code by email or SMS here. The playground never
+  // sends anything: in test mode it keeps the code for the browser tests.
+  provideProfileNotifier({
+    async send(message) {
+      if (!testMode) throw new Error('The playground sends nothing.')
+      playground.lastCode = message.code
     },
   })
 

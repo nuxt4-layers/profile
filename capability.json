@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1",
   "name": "@nuxt4-layers/profile",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "classification": "foundation",
   "provides": [
     {
@@ -21,6 +21,12 @@
       "contractVersion": "1",
       "optional": false,
       "purpose": "the signed-in principal for each /api/profile request, through the host's subject resolver; there is no package dependency"
+    },
+    {
+      "capability": "Authorisation",
+      "contractVersion": "3",
+      "optional": true,
+      "purpose": "whether a viewer may see a group's suspended members by name, through the host's access-decision port; there is no package dependency"
     },
     {
       "capability": "SemanticPresentationTheme",
@@ -52,6 +58,18 @@
     {
       "port": "ProfileSubjectResolver",
       "optional": false
+    },
+    {
+      "port": "ProfileRequestCoordinator",
+      "optional": true
+    },
+    {
+      "port": "ProfileAccessDecision",
+      "optional": true
+    },
+    {
+      "port": "ProfileNotifier",
+      "optional": true
     }
   ],
   "integration": {

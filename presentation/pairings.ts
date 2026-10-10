@@ -1,0 +1,18 @@
+/**
+ * Pen or Edge tokens drawn on a fill of another role or state, each because
+ * the meaning requires it, and each listed in docs/contracts.md (§13). A
+ * host's theme must keep these legible. The same as Identity's and
+ * Authentication's.
+ *
+ * Kept outside presentation/utils so that Nuxt does not auto-import it into
+ * hosts, where Identity's and Authentication's lists of the same name would
+ * collide; hosts and tests import it from `./presentation`.
+ */
+export const DELIBERATE_PAIRINGS = [
+  // Hints, notes and definition terms on the card.
+  { token: 'pen-muted-default', on: 'fill-base-default' },
+  // An invalid field's border.
+  { token: 'edge-error-default', on: 'fill-input-default' },
+  // The focus indicator around controls on the card.
+  { token: 'edge-base-active', on: 'fill-base-default' },
+] as const

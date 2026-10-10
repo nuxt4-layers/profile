@@ -88,6 +88,94 @@ create table {{schema}}."lookup_window" (
 );
 `,
   },
+  {
+    id: '0003_requests_holds_verification',
+    sql: `
+-- Data-subject requests (docs/contracts.md §14): identifiers, codes and
+-- times only. They outlive an erasure, as the record of what was asked and
+-- answered; any bundle a part holds is sealed with the person's key, so it
+-- is unreadable once the key is gone, and is deleted with it anyway.
+create table {{schema}}."request" (
+  "request_id" text primary key,
+  "identity_id" text not null,
+  "type" text not null check ("type" in ('access', 'correction', 'erasure', 'restriction')),
+  "origin" text not null check ("origin" in ('person', 'operator')),
+  "reason_code" text,
+  "status" text not null default 'open' check ("status" in ('open', 'completed')),
+  "correlation_id" text not null,
+  "opened_at" timestamptz not null,
+  "due_at" timestamptz not null,
+  "completed_at" timestamptz,
+  "escalated_at" timestamptz,
+  "rename_escalated_at" timestamptz,
+  "archive_deleted_at" timestamptz,
+  check ("origin" = 'person' or "reason_code" is not null)
+);
+create index "request_identity_idx" on {{schema}}."request" ("identity_id", "opened_at");
+create index "request_open_idx" on {{schema}}."request" ("due_at") where "status" = 'open';
+
+create table {{schema}}."request_part" (
+  "request_id" text not null references {{schema}}."request" ("request_id") on delete cascade,
+  "part" text not null check ("part" in ('profile', 'identity', 'authentication', 'authorisation')),
+  "status" text not null default 'pending' check ("status" in ('pending', 'done', 'exempt', 'held')),
+  "reason_code" text,
+  -- An access request's bundle for this part, sealed with the person's key.
+  "ciphertext" bytea,
+  "updated_at" timestamptz not null default now(),
+  primary key ("request_id", "part"),
+  check ("status" <> 'exempt' or "reason_code" is not null)
+);
+
+-- Groups a correction or erasure request names, and when each was renamed.
+create table {{schema}}."request_group" (
+  "request_id" text not null references {{schema}}."request" ("request_id") on delete cascade,
+  "group_id" text not null,
+  "renamed_at" timestamptz,
+  primary key ("request_id", "group_id")
+);
+create index "request_group_group_idx" on {{schema}}."request_group" ("group_id") where "renamed_at" is null;
+
+-- Legal holds: they defer only the erasure of the parts they cover.
+create table {{schema}}."legal_hold" (
+  "hold_id" text primary key,
+  "identity_id" text not null,
+  "parts" text[] not null check (cardinality("parts") between 1 and 3 and "parts" <@ array['profile', 'authentication', 'authorisation']),
+  "reason_code" text not null,
+  "placed_at" timestamptz not null,
+  "ends_at" timestamptz not null,
+  "ended_at" timestamptz,
+  "end_reason" text,
+  check ("ends_at" > "placed_at")
+);
+create index "legal_hold_identity_idx" on {{schema}}."legal_hold" ("identity_id") where "ended_at" is null;
+
+-- Identities Identity has closed, so a hold ending knows erasure is due.
+create table {{schema}}."closed_identity" (
+  "identity_id" text primary key,
+  "closed_at" timestamptz not null
+);
+
+-- A closed person's record kept under a legal hold covering Profile: read
+-- by no function, erased when the last such hold ends.
+create table {{schema}}."held_closure" (
+  "identity_id" text primary key references {{schema}}."subject_key" ("identity_id") on delete cascade,
+  "closed_at" timestamptz not null
+);
+
+-- A contact detail's pending verification (docs/contracts.md §15): the code
+-- only as a keyed digest bound to the value, deleted with the key.
+create table {{schema}}."contact_verification" (
+  "identity_id" text not null references {{schema}}."subject_key" ("identity_id") on delete cascade,
+  "attribute" text not null check ("attribute" in ('email', 'phone_number')),
+  "code_digest" bytea,
+  "expires_at" timestamptz,
+  "attempts" integer not null default 0,
+  "window_start" timestamptz not null,
+  "sends" integer not null default 0,
+  primary key ("identity_id", "attribute")
+);
+`,
+  },
 ]
 
 const SCHEMA_PATTERN = /^[a-z_][a-z0-9_]{0,62}$/
@@ -132,6 +220,9 @@ export async function runProfileMigrations(pool: PostgresPoolLike, schema: strin
       const role = `"${runtimeRole}"`
       await client.query(`grant usage on schema ${quoted} to ${role}`)
       await client.query(`grant select, insert, update, delete on ${quoted}."subject_key", ${quoted}."record", ${quoted}."departure", ${quoted}."pseudonym_counter", ${quoted}."processed_event", ${quoted}."outbox", ${quoted}."lookup_window" to ${role}`)
+      await client.query(`grant select, insert, update, delete on ${quoted}."request_part", ${quoted}."request_group", ${quoted}."held_closure", ${quoted}."contact_verification" to ${role}`)
+      // Requests, holds and closures are records: the runtime role never deletes them.
+      await client.query(`grant select, insert, update on ${quoted}."request", ${quoted}."legal_hold", ${quoted}."closed_identity" to ${role}`)
       await client.query(`grant select, insert on ${quoted}."erased" to ${role}`)
       await client.query(`grant usage on sequence ${quoted}."outbox_sequence_seq" to ${role}`)
     }

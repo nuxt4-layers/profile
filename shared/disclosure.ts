@@ -65,6 +65,23 @@ export type SubjectStanding = typeof SUBJECT_STANDINGS[number]
 export const DEPARTURE_ATTRIBUTIONS = ['keep-name', 'pseudonymise', 'anonymise'] as const
 export type DepartureAttribution = typeof DEPARTURE_ATTRIBUTIONS[number]
 
+/** A membership's own state, as Identity records it. */
+export const MEMBERSHIP_STATES = ['active', 'paused', 'suspended', 'ended'] as const
+export type MembershipState = typeof MEMBERSHIP_STATES[number]
+
+/**
+ * The subject's standing in the group context: their identity's standing,
+ * made stricter by their own membership of the group. A member paused or
+ * suspended in a group is hidden there as a paused or suspended person is
+ * everywhere (iam-integration's pausing and suspension process).
+ */
+export function standingInGroup(standing: SubjectStanding, membership: MembershipState | null | undefined): SubjectStanding {
+  if (standing !== 'visible' && standing !== 'paused') return standing
+  if (membership === 'suspended') return 'suspended'
+  if (membership === 'paused') return 'paused'
+  return standing
+}
+
 /** Identity's maximum batch: one viewer, up to 200 subjects. */
 export const DISCLOSURE_MAX_SUBJECTS = 200
 
@@ -80,6 +97,8 @@ export const disclosureContextSchema = z.object({
     subjectId: identifierSchema,
     relationship: z.enum(RELATIONSHIPS),
     standing: z.enum(SUBJECT_STANDINGS),
+    /** The subject's membership of the group context, when the viewer may know of it. */
+    membershipInGroup: z.object({ state: z.enum(MEMBERSHIP_STATES) }).nullable().optional(),
   })).max(DISCLOSURE_MAX_SUBJECTS),
   readAt: instantSchema,
 })
@@ -94,11 +113,14 @@ export type DisclosureContext = z.infer<typeof disclosureContextSchema>
  * Why a name is being looked up:
  *
  * - `attribution` — who wrote or did something in the past;
- * - `listing` — who is here now (member lists, profiles, search).
+ * - `listing` — who is here now (member lists, profiles, search);
+ * - `administration` — a group's member list as its administrators see it:
+ *   a listing, except that a suspended member is named, by display name
+ *   only, to a viewer who holds `profile.suspended-people:view` on the group.
  *
  * A paused person is left out of listings but stays attributed.
  */
-export const LOOKUP_PURPOSES = ['attribution', 'listing'] as const
+export const LOOKUP_PURPOSES = ['attribution', 'listing', 'administration'] as const
 export type LookupPurpose = typeof LOOKUP_PURPOSES[number]
 
 /**
@@ -132,6 +154,11 @@ export interface DisclosureInput {
   /** The group's departure attribution, when a group context applies. */
   departureAttribution: DepartureAttribution | null
   departure: DepartureFacts | null
+  /**
+   * For `administration` only: the viewer holds `profile.suspended-people:view`
+   * on the group context, as Authorisation decided for this lookup.
+   */
+  administrator?: boolean
 }
 
 const AUDIENCE_RANK: Readonly<Record<DisclosureAudience, number>> = { nobody: 0, group: 1, tenant: 2 }
@@ -151,6 +178,11 @@ function shown(standing: SubjectStanding, purpose: LookupPurpose): boolean {
   return standing === 'paused' && purpose === 'attribution'
 }
 
+/** A suspended fellow member, named to the group's administrators in an administration listing (display name only). */
+function namedToAdministrator(input: DisclosureInput): boolean {
+  return input.purpose === 'administration' && input.administrator === true && input.standing === 'suspended' && input.relationship === 'same-group'
+}
+
 /** The attributes the viewer may see. The person sees all of their own. */
 export function discloseAttributes(input: Omit<DisclosureInput, 'departureAttribution' | 'departure'>): ProfileAttributes {
   const { attributes, settings, relationship } = input
@@ -165,7 +197,7 @@ export function discloseAttributes(input: Omit<DisclosureInput, 'departureAttrib
     if (AUDIENCE_RANK[settings.audiences[key]] < reach(relationship)) continue
     disclosed[key] = value
     const claim = VERIFICATION_CLAIMS[key]
-    if (claim) disclosed[claim] = false
+    if (claim) disclosed[claim] = attributes[claim] === true
   }
   return disclosed as ProfileAttributes
 }
@@ -181,6 +213,11 @@ export function discloseDisplayName(input: DisclosureInput): DisplayName {
   if (relationship === 'self') {
     const own = chosenDisplayName(input.attributes, settings)
     return own === null ? { kind: 'hidden' } : { kind: 'name', value: own }
+  }
+  if (namedToAdministrator(input)) {
+    const visible = discloseAttributes({ ...input, standing: 'visible', purpose: 'listing' })
+    const name = visible[settings.displayName]
+    return name === undefined ? { kind: 'hidden' } : { kind: 'name', value: name }
   }
   if (!shown(input.standing, input.purpose)) return { kind: 'hidden' }
   if (relationship === 'former-member') {

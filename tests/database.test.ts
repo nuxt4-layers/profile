@@ -91,6 +91,7 @@ describe.skipIf(!hasDatabase)('Profile storage on PostgreSQL', () => {
     expect(owned.rows[0].n).toBe(0)
     await expect(runtime.query('create table "profile"."intruder" (x int)')).rejects.toThrow()
     await expect(runtime.query(`delete from "profile"."erased"`)).rejects.toThrow()
+    for (const record of ['request', 'legal_hold', 'closed_identity']) await expect(runtime.query(`delete from "profile"."${record}"`)).rejects.toThrow()
     const bypass = await admin.query('select rolbypassrls, rolsuper from pg_roles where rolname = $1', [role])
     expect(bypass.rows[0]).toEqual({ rolbypassrls: false, rolsuper: false })
   })
@@ -277,6 +278,89 @@ describe.skipIf(!hasDatabase)('Profile storage on PostgreSQL', () => {
     const old = createLocalProfileKeyWrapper({ keys: { v1: master(1) }, current: 'v1' })
     const key = await old.unwrap({ version: 'v1', wrapped: backup.wrapped_key }, { identityId: ids.ada })
     expect(open(key, backup.ciphertext, aad.record(ids.ada))).toContain('Augusta')
+  })
+
+  it('keeps a closed person\'s record under a legal hold, read by nobody, and erases it when the hold ends', async () => {
+    const held = uuidv7()
+    await provision(held)
+    await service().update({ subjectId: held, correlationId: correlationId(), changes: { name: 'Hedy Held' } })
+    const hold = await service().placeHold({ identityId: held, parts: ['profile', 'authentication'], reasonCode: 'litigation', endsAt: new Date(Date.now() + 86_400_000).toISOString(), correlationId: correlationId() })
+    expect(hold).toMatchObject({ identityId: held, parts: ['profile', 'authentication'], endedAt: null })
+    expect(await service().heldParts({ identityId: held })).toEqual(['profile', 'authentication'])
+    await expect(service().erase({ identityId: held, reasonCode: 'person-request', correlationId: correlationId() })).rejects.toMatchObject({ code: 'conflict' })
+    await expect(service().placeHold({ identityId: held, parts: ['profile'], reasonCode: 'litigation', endsAt: new Date(Date.now() + 8 * 366 * 86_400_000).toISOString(), correlationId: correlationId() })).rejects.toMatchObject({ code: 'validation-failed' })
+
+    const erasure = await service().openRequest({ subjectId: held, type: 'erasure', origin: 'operator', reasonCode: 'verified-by-post', correlationId: correlationId() })
+    expect(erasure.parts.map(part => part.part)).toEqual(['profile', 'identity', 'authentication', 'authorisation'])
+    await expect(service().openRequest({ subjectId: held, type: 'erasure', origin: 'person', correlationId: correlationId() })).rejects.toMatchObject({ code: 'validation-failed' })
+    await expect(service().openRequest({ subjectId: held, type: 'erasure', origin: 'operator', correlationId: correlationId() })).rejects.toMatchObject({ code: 'validation-failed' })
+
+    // Identity closes the identity: the record stays, but nothing reads it.
+    await service().applyIdentityEvent(identityEvent('identity.closed', { identityId: held }))
+    expect((await admin.query('select 1 from "profile"."record" where "identity_id" = $1', [held])).rows).toHaveLength(1)
+    expect(await service().own({ subjectId: held })).toBeNull()
+    expect(await service().exportData({ subjectId: held })).toBeNull()
+    await expect(service().update({ subjectId: held, correlationId: correlationId(), changes: { name: 'Back' } })).rejects.toMatchObject({ code: 'forbidden' })
+    const status = async () => Object.fromEntries((await service().getRequest({ requestId: erasure.requestId }))!.parts.map(part => [part.part, part.status]))
+    expect(await status()).toEqual({ profile: 'held', identity: 'done', authentication: 'held', authorisation: 'pending' })
+
+    // The host's handler erased Authorisation's part, which no hold covers.
+    await service().recordRequestPart({ identityId: held, part: 'authorisation', correlationId: correlationId() })
+    expect((await status()).authorisation).toBe('done')
+
+    // The hold is released: Profile erases now, and tells the host which parts to erase.
+    await service().releaseHold({ holdId: hold.holdId, reasonCode: 'case-closed', correlationId: correlationId() })
+    expect((await admin.query('select 1 from "profile"."subject_key" where "identity_id" = $1', [held])).rows).toEqual([])
+    const ended = (await outbox()).filter(e => e.type === 'profile.legal-hold-ended').at(-1)
+    expect(ended?.data).toMatchObject({ holdId: hold.holdId, identityId: held, parts: ['profile', 'authentication'], released: ['profile', 'authentication'], identityClosed: true, reasonCode: 'case-closed' })
+    expect(await status()).toEqual({ profile: 'done', identity: 'done', authentication: 'pending', authorisation: 'done' })
+    await service().recordRequestPart({ identityId: held, part: 'authentication', correlationId: correlationId() })
+    expect(await service().getRequest({ requestId: erasure.requestId })).toMatchObject({ status: 'completed' })
+    expect((await outbox()).filter(e => e.type === 'profile.request-completed').at(-1)?.data).toMatchObject({ requestId: erasure.requestId, identityId: held })
+    await expect(service().releaseHold({ holdId: hold.holdId, reasonCode: 'case-closed', correlationId: correlationId() })).rejects.toMatchObject({ code: 'conflict' })
+    // The request outlives the erasure, as identifiers and codes only.
+    const dump = JSON.stringify((await admin.query('select * from "profile"."request" r join "profile"."request_part" p using ("request_id") where r."identity_id" = $1', [held])).rows)
+    expect(dump).not.toContain('Hedy')
+  })
+
+  it('completes a correction when every group it names is renamed, and raises it to operators if the owners are slow', async () => {
+    const person = uuidv7()
+    await provision(person)
+    const groupA = uuidv7()
+    const groupB = uuidv7()
+    const opened = await service().openRequest({ subjectId: person, type: 'correction', origin: 'operator', reasonCode: 'verified-by-email', groupIds: [groupA, groupB], correlationId: correlationId() })
+    expect(opened).toMatchObject({ status: 'open', groupIds: [groupA, groupB].sort() })
+    await service().settlePart({ requestId: opened.requestId, part: 'profile', outcome: 'done', correlationId: correlationId() })
+    await service().applyIdentityEvent(identityEvent('group.renamed', { groupId: groupA }))
+    expect((await service().getRequest({ requestId: opened.requestId }))?.status).toBe('open')
+
+    // Half the deadline passes with group B unrenamed: operators are told, once.
+    const later = new Date(Date.parse(opened.openedAt) + 20 * 86_400_000)
+    const atLater = () => createService({ pool: runtime, schema: 'profile', keys, disclosure: () => disclosure, now: () => later })
+    await atLater().maintain()
+    await atLater().maintain()
+    const escalations = (await outbox()).filter(e => e.type === 'profile.request-escalated' && e.data.requestId === opened.requestId)
+    expect(escalations.map(e => e.data.reasonCode)).toEqual(['group-rename-overdue'])
+
+    await service().applyIdentityEvent(identityEvent('group.renamed', { groupId: groupB }))
+    expect(await service().getRequest({ requestId: opened.requestId })).toMatchObject({ status: 'completed' })
+  })
+
+  it('lets an operator exempt a part with a reason code, and ends holds on their end date', async () => {
+    const person = uuidv7()
+    await provision(person)
+    const opened = await service().openRequest({ subjectId: person, type: 'restriction', parts: ['identity'], origin: 'operator', reasonCode: 'verified-by-post', correlationId: correlationId() })
+    expect(opened.parts.map(part => `${part.part}:${part.status}`)).toEqual(['profile:done', 'identity:pending'])
+    await expect(service().settlePart({ requestId: opened.requestId, part: 'identity', outcome: 'exempt', correlationId: correlationId() })).rejects.toMatchObject({ code: 'validation-failed' })
+    const settled = await service().settlePart({ requestId: opened.requestId, part: 'identity', outcome: 'exempt', reasonCode: 'legitimate-grounds', correlationId: correlationId() })
+    expect(settled).toMatchObject({ status: 'completed', parts: [expect.objectContaining({ part: 'profile', status: 'done' }), expect.objectContaining({ part: 'identity', status: 'exempt', reasonCode: 'legitimate-grounds' })] })
+
+    const hold = await service().placeHold({ identityId: person, parts: ['authorisation'], reasonCode: 'litigation', endsAt: new Date(Date.now() + 60_000).toISOString(), correlationId: correlationId() })
+    const after = new Date(Date.now() + 120_000)
+    const result = await createService({ pool: runtime, schema: 'profile', keys, disclosure: () => disclosure, now: () => after }).maintain()
+    expect(result.holdsEnded).toBeGreaterThanOrEqual(1)
+    expect((await service().listHolds({ identityId: person }))[0]).toMatchObject({ holdId: hold.holdId, endedAt: expect.any(String) })
+    expect((await outbox()).filter(e => e.type === 'profile.legal-hold-ended').at(-1)?.data).toMatchObject({ holdId: hold.holdId, released: ['authorisation'], identityClosed: false, reasonCode: 'expired' })
   })
 
   it('fails closed when the key port fails', async () => {

@@ -1,6 +1,8 @@
 import type { ProfileSubject } from './api'
 import type { DisclosureContext } from './disclosure'
 import type { ProfileEvent } from './events'
+import type { CoordinatedPart } from './requests'
+import type { VerifiableAttribute } from './verification'
 
 /**
  * Ports the host supplies (docs/composition-contract.md). Declared
@@ -92,4 +94,46 @@ export type ProfileEventPublisher = (event: ProfileEvent) => Promise<void>
  */
 export interface ProfileSubjectResolver {
   resolve(event: unknown): Promise<ProfileSubject | null>
+}
+
+/**
+ * Coordination port for data-subject requests (docs/contracts.md §14), from
+ * iam-integration's `profileRequestCoordinatorFromMembers`: one other
+ * member's part of an access request, as a machine-readable bundle, or null
+ * when that member holds nothing for the identity. A member's failure
+ * rejects; Profile keeps that part pending and retries it.
+ */
+export interface ProfileRequestCoordinator {
+  exportPart(input: { identityId: string, part: CoordinatedPart, correlationId: string }): Promise<unknown | null>
+}
+
+/**
+ * Access-decision port, from iam-integration's
+ * `profileAccessDecisionFromAuthorisation`: whether the signed-in viewer
+ * holds one of Profile's permissions on a group now. Any refusal is false; a
+ * failure rejects, and Profile shows only what it shows anyone.
+ */
+export interface ProfileAccessDecision {
+  allows(input: { subject: ProfileSubject, permission: string, groupId: string }): Promise<boolean>
+}
+
+/**
+ * Notification port (docs/contracts.md §15): the host delivers a one-time
+ * verification code to a contact detail, by email or SMS, in the person's
+ * locale. Profile calls it for nothing else. A failure rejects, and the
+ * code is not counted as sent.
+ */
+export interface ProfileNotifier {
+  send(message: {
+    channel: 'email' | 'sms'
+    /** The contact detail itself: the only place Profile hands one out. */
+    to: string
+    purpose: 'contact-verification'
+    attribute: VerifiableAttribute
+    code: string
+    /** The person's `locale`, if set. */
+    locale: string | null
+    /** Seconds until the code expires. */
+    expiresInSeconds: number
+  }): Promise<void>
 }

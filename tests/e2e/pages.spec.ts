@@ -17,6 +17,7 @@ interface Scenario {
   stranger: string
   leaver: string
   group: string
+  formerGroup: string
 }
 
 async function seed(request: APIRequestContext): Promise<Scenario> {
@@ -98,7 +99,7 @@ test('asks a signed-out visitor to sign in, and returns them afterwards', async 
 })
 
 test('protects every page from framing, caching and referrer leaks', async ({ request }) => {
-  for (const path of ['/profile', `/profile/people/${OTHER}`]) {
+  for (const path of ['/profile', `/profile/people/${OTHER}`, '/profile/departures', '/profile/requests']) {
     const response = await request.get(path)
     expect(response.headers()['x-frame-options'], path).toBe('DENY')
     expect(response.headers()['cache-control'], path).toBe('no-store')
@@ -240,11 +241,78 @@ test('names people by what Profile discloses, and links disclosed names only', a
   await expect(list.getByRole('link', { name: 'Ada Lovelace' })).toHaveAttribute('href', `/profile/people/${scenario.colleague}?groupId=${scenario.group}`)
 })
 
+test('verifies a contact detail with a code, by keyboard, and asks again once it changes', async ({ page, context, request }) => {
+  const scenario = await seed(request)
+  await signInAs(context, scenario.viewer)
+  await page.goto('/profile')
+  await details(page).getByLabel('Contact email').fill('katherine@example.com')
+  await details(page).getByRole('button', { name: 'Save' }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Your details have been saved.' })).toBeVisible()
+
+  await details(page).getByRole('button', { name: 'Send a code to verify it' }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'We have sent a 6-digit code to this email address.' })).toBeVisible()
+  await expectAccessible(page)
+  const { code } = await (await request.get('/api/__playground/code')).json() as { code: string }
+  await details(page).getByLabel('Code').fill(code)
+  await page.keyboard.press('Enter')
+  await expect(details(page).getByText('Verified', { exact: true })).toBeVisible()
+  await page.reload()
+  await expect(details(page).getByText('Verified', { exact: true })).toBeVisible()
+
+  await details(page).getByLabel('Contact email').fill('kj@example.com')
+  await details(page).getByRole('button', { name: 'Save' }).click()
+  await expect(details(page).getByRole('button', { name: 'Send a code to verify it' })).toBeVisible()
+  await expectAccessible(page)
+})
+
+test('lets a person choose anonymity in one group they left, after confirming', async ({ page, context, request }) => {
+  const scenario = await seed(request)
+  await signInAs(context, scenario.viewer)
+  await page.goto('/profile')
+  await choices(page).getByRole('link', { name: 'Choose this for a group you have already left' }).click()
+  await expect(page.getByRole('heading', { level: 1, name: 'Groups you have left' })).toBeVisible()
+  await expect(page.locator(`[data-group-id="${scenario.formerGroup}"]`)).toHaveText('A group you left')
+  await expectAccessible(page)
+
+  await page.getByRole('button', { name: 'Show me as "Former member" here' }).click()
+  await page.getByRole('button', { name: 'Cancel' }).click()
+  await page.getByRole('button', { name: 'Show me as "Former member" here' }).click()
+  await page.getByRole('button', { name: 'Yes, show me as "Former member"' }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'You are shown there as "Former member" from now on.' })).toBeVisible()
+  await expect(page.getByText('Shown as "Former member"', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Show me as "Former member" here' })).toHaveCount(0)
+  await expectAccessible(page)
+})
+
+test('answers a request for a copy of all the data, and offers no deletion but closing the account', async ({ page, context, request }) => {
+  const scenario = await seed(request)
+  await signInAs(context, scenario.viewer)
+  await page.goto('/profile')
+  await page.getByRole('link', { name: 'Your requests about your data' }).click()
+  await expect(page.getByRole('heading', { level: 1, name: 'Your requests about your data' })).toBeVisible()
+  await expectAccessible(page)
+
+  await page.getByRole('button', { name: 'Ask for a copy of my data' }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Your request has been made.' })).toBeVisible()
+  const list = page.getByRole('region', { name: 'Your requests' })
+  await expect(list.getByRole('heading', { name: 'A copy of your data' })).toBeVisible()
+  await expect(list.getByText('Completed', { exact: true })).toBeVisible()
+  const download = page.waitForEvent('download')
+  await list.getByRole('button', { name: 'Download my data' }).click()
+  expect((await download).suggestedFilename()).toBe('my-data.json')
+  await expectAccessible(page)
+
+  await signInAs(context, scenario.viewer, Date.now() - 60 * 60 * 1000)
+  await page.reload()
+  await page.getByRole('button', { name: 'Restrict who sees my details' }).click()
+  await expect(page.getByRole('alert')).toContainText('sign in again')
+})
+
 test('reflows to 320 CSS pixels without scrolling sideways', async ({ page, context, request }) => {
   const scenario = await seed(request)
   await signInAs(context, scenario.viewer)
   await page.setViewportSize({ width: 320, height: 800 })
-  for (const path of ['/profile', `/profile/people/${scenario.colleague}`]) {
+  for (const path of ['/profile', `/profile/people/${scenario.colleague}`, '/profile/departures', '/profile/requests']) {
     await page.goto(path)
     await expectNoHorizontalScroll(page)
   }

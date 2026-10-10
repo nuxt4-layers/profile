@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DisclosureInput, DisclosureSettings, ProfileAttributes } from '../contracts'
-import { DEFAULT_DISCLOSURE_SETTINGS, discloseAttributes, discloseDisplayName } from '../contracts'
+import { DEFAULT_DISCLOSURE_SETTINGS, discloseAttributes, discloseDisplayName, standingInGroup } from '../contracts'
 
 const attributes: ProfileAttributes = { name: 'Ada Lovelace', given_name: 'Ada', preferred_username: 'countess', email: 'ada@example.com', email_verified: false }
 const settings = (change: Partial<Omit<DisclosureSettings, 'audiences'>> & { audiences?: Partial<DisclosureSettings['audiences']> } = {}): DisclosureSettings => ({
@@ -82,5 +82,41 @@ describe('disclosure: departure data policy', () => {
 
   it('shows "Former member" when nothing was kept', () => {
     expect(left({ departureAttribution: 'keep-name', departure: null })).toEqual({ kind: 'former-member' })
+  })
+})
+
+describe('disclosure: a membership in the group, and administrators', () => {
+  it('makes the standing stricter by the subject\'s own membership of the group, never looser', () => {
+    expect(standingInGroup('visible', 'paused')).toBe('paused')
+    expect(standingInGroup('visible', 'suspended')).toBe('suspended')
+    expect(standingInGroup('paused', 'suspended')).toBe('suspended')
+    expect(standingInGroup('suspended', 'active')).toBe('suspended')
+    expect(standingInGroup('gone', 'active')).toBe('gone')
+    expect(standingInGroup('visible', 'ended')).toBe('visible')
+    expect(standingInGroup('visible', null)).toBe('visible')
+  })
+
+  it('names a suspended fellow member to an administrator, by display name only', () => {
+    const suspended = input({ standing: 'suspended', purpose: 'administration', administrator: true })
+    expect(discloseDisplayName(suspended)).toEqual({ kind: 'name', value: 'Ada Lovelace' })
+    expect(discloseAttributes(suspended)).toEqual({})
+  })
+
+  it('names them to nobody else, and never someone closing or gone', () => {
+    expect(discloseDisplayName(input({ standing: 'suspended', purpose: 'administration', administrator: false }))).toEqual({ kind: 'hidden' })
+    expect(discloseDisplayName(input({ standing: 'suspended', purpose: 'listing', administrator: true }))).toEqual({ kind: 'hidden' })
+    expect(discloseDisplayName(input({ standing: 'suspended', purpose: 'administration', administrator: true, relationship: 'same-tenant' }))).toEqual({ kind: 'hidden' })
+    for (const standing of ['closing', 'gone'] as const) {
+      expect(discloseDisplayName(input({ standing, purpose: 'administration', administrator: true }))).toEqual({ kind: 'hidden' })
+    }
+  })
+
+  it('still respects the audience the person chose for their name', () => {
+    expect(discloseDisplayName(input({ standing: 'suspended', purpose: 'administration', administrator: true, settings: settings({ audiences: { name: 'nobody' } }) }))).toEqual({ kind: 'hidden' })
+  })
+
+  it('treats an administration listing as a listing for everyone else', () => {
+    expect(discloseDisplayName(input({ purpose: 'administration' }))).toEqual({ kind: 'name', value: 'Ada Lovelace' })
+    expect(discloseDisplayName(input({ standing: 'paused', purpose: 'administration', administrator: true }))).toEqual({ kind: 'hidden' })
   })
 })

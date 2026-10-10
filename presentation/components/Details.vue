@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ProfileAttribute, ProfileChanges, ProfileOwnView } from '../../contracts'
-import { attributeSchemas, PROFILE_ATTRIBUTES, STEP_UP_ATTRIBUTES } from '../../contracts'
+import { attributeSchemas, PROFILE_ATTRIBUTES, STEP_UP_ATTRIBUTES, VERIFIABLE_ATTRIBUTES } from '../../contracts'
 
 /**
  * PUBLIC. The person's own details, as a form. Each field is checked with
@@ -100,6 +100,10 @@ async function save() {
   }
 }
 
+/** A saved contact detail, unchanged in the form, can be verified. */
+const verifiable = (key: ProfileAttribute) => (VERIFIABLE_ATTRIBUTES as readonly string[]).includes(key)
+  && props.me.attributes[key] !== undefined && draft.value[key].trim() === props.me.attributes[key]
+
 const touchesContact = computed(() => STEP_UP_ATTRIBUTES.some(key => draft.value[key].trim() !== (props.me.attributes[key] ?? '')))
 </script>
 
@@ -141,6 +145,7 @@ const touchesContact = computed(() => STEP_UP_ATTRIBUTES.some(key => draft.value
         >
         <p v-if="hasHint(key)" :id="`profile-hint-${key}`" :class="profileClasses.hint">{{ t(`profile.hint.${key}`) }}</p>
         <p v-if="problems[key]" :id="`profile-problem-${key}`" :class="profileClasses.fieldError">{{ problems[key] }}</p>
+        <ProfileContactVerification v-if="verifiable(key)" :me="me" :attribute="key as 'email' | 'phone_number'" @updated="view => emit('updated', view)" />
       </div>
 
       <ProfileAlert :tone="touchesContact ? 'warning' : 'info'" :focus-on-mount="false">

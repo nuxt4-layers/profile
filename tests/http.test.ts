@@ -12,9 +12,12 @@ import { uuidv7 } from '../server/internal/crypto'
 import { originRejected } from '../server/internal/http'
 import {
   clearProfileComposition,
+  provideProfileAccessDecision,
   provideProfileDatabase,
   provideProfileDisclosureContext,
   provideProfileKeyWrapper,
+  provideProfileNotifier,
+  provideProfileRequestCoordinator,
   provideProfileSubjectResolver,
 } from '../server/utils/profile-composition'
 import { applyProfileIdentityEvent } from '../server/utils/profile-server'
@@ -43,6 +46,13 @@ describe.skipIf(!hasDatabase)('the /api/profile endpoints', () => {
   let handler: (request: Request) => Promise<Response>
   let resolverFails = false
   const relationships = new Map<string, DisclosureContext['subjects'][number]['relationship']>()
+  const standings = new Map<string, DisclosureContext['subjects'][number]['standing']>()
+  const membershipStates = new Map<string, 'active' | 'paused' | 'suspended'>()
+  // Stand-ins for the host's adapters: the other members' exports, Authorisation, and the notifier.
+  const administrators = new Set<string>()
+  const decisions: { principalId: string, permission: string, groupId: string }[] = []
+  const sent: { to: string, code: string, attribute: string, channel: string }[] = []
+  let authenticationDown = false
 
   const disclosure: ProfileDisclosureContextPort = {
     async describe(request) {
@@ -53,7 +63,8 @@ describe.skipIf(!hasDatabase)('the /api/profile endpoints', () => {
         subjects: request.subjectIds.map(subjectId => ({
           subjectId,
           relationship: subjectId === request.viewerId ? 'self' : relationships.get(subjectId) ?? 'none',
-          standing: 'visible',
+          standing: standings.get(subjectId) ?? 'visible',
+          membershipInGroup: request.groupId && membershipStates.has(subjectId) ? { state: membershipStates.get(subjectId)! } : null,
         })),
         readAt: new Date().toISOString(),
       }
@@ -98,7 +109,26 @@ describe.skipIf(!hasDatabase)('the /api/profile endpoints', () => {
   beforeEach(() => {
     clearProfileComposition()
     resolverFails = false
+    authenticationDown = false
     relationships.clear()
+    standings.clear()
+    membershipStates.clear()
+    administrators.clear()
+    decisions.length = 0
+    sent.length = 0
+    provideProfileRequestCoordinator({
+      async exportPart({ identityId, part }) {
+        if (part === 'authentication' && authenticationDown) throw new Error('authentication is down')
+        return part === 'authorisation' ? null : { member: part, identityId }
+      },
+    })
+    provideProfileAccessDecision({
+      async allows({ subject, permission, groupId }) {
+        decisions.push({ principalId: subject.principalId, permission, groupId })
+        return administrators.has(subject.principalId)
+      },
+    })
+    provideProfileNotifier({ async send(message) { sent.push({ to: message.to, code: message.code, attribute: message.attribute, channel: message.channel }) } })
     provideProfileDatabase({ dialect: 'postgres', pool })
     provideProfileKeyWrapper(createLocalProfileKeyWrapper({ keys: { v1: Buffer.alloc(32, 3).toString('base64') }, current: 'v1' }))
     provideProfileDisclosureContext(disclosure)
@@ -123,11 +153,17 @@ describe.skipIf(!hasDatabase)('the /api/profile endpoints', () => {
     const routes = endpointFiles().map(endpoint => `${endpoint.method.toUpperCase()} ${endpoint.route}`).sort()
     expect(routes).toEqual([
       'GET /api/profile/me',
+      'GET /api/profile/me/departures',
       'GET /api/profile/me/export',
+      'GET /api/profile/me/requests',
+      'GET /api/profile/me/requests/:requestId/archive',
       'GET /api/profile/people/:subjectId',
       'PATCH /api/profile/me',
       'POST /api/profile/display-names',
       'POST /api/profile/me/departures/:groupId/anonymise',
+      'POST /api/profile/me/requests',
+      'POST /api/profile/me/verification/:attribute/confirm',
+      'POST /api/profile/me/verification/:attribute/send',
       'PUT /api/profile/me/disclosure',
     ])
   })
@@ -223,6 +259,115 @@ describe.skipIf(!hasDatabase)('the /api/profile endpoints', () => {
     const me = await person()
     const groupId = uuidv7()
     expect(await call('POST', `/api/profile/me/departures/${groupId}/anonymise`, { as: me })).toEqual(expect.objectContaining({ status: 200, data: { groupId, status: 'anonymised' } }))
+  })
+
+  it('lists the groups the person has left, for the page to choose anonymity in one', async () => {
+    const me = await person()
+    const left = uuidv7()
+    await applyProfileIdentityEvent({ eventId: uuidv7(), type: 'membership.ended', occurredAt: new Date().toISOString(), correlationId: uuidv7(), data: { identityId: me, groupId: left } })
+    const before = await call('GET', '/api/profile/me/departures', { as: me })
+    expect(before).toMatchObject({ status: 200, data: { departures: [{ groupId: left, anonymised: false }] } })
+    expect(before.headers.get('cache-control')).toBe('no-store')
+    await call('POST', `/api/profile/me/departures/${left}/anonymise`, { as: me })
+    expect((await call('GET', '/api/profile/me/departures', { as: me })).data.departures).toEqual([expect.objectContaining({ groupId: left, anonymised: true })])
+    expect((await call('GET', '/api/profile/me/departures', { as: await person() })).data.departures).toEqual([])
+  })
+
+  it('answers an access request from every member, as an archive only the person can download, after a recent sign-in', async () => {
+    const me = await person()
+    await call('PATCH', '/api/profile/me', { as: me, body: { expectedVersion: 1, changes: { name: 'Ada Lovelace' } } })
+    expect(await call('POST', '/api/profile/me/requests', { as: me, ageSeconds: 20 * 60, body: { type: 'access' } })).toMatchObject({ status: 403, data: { code: 'insufficient-assurance' } })
+    expect(await call('POST', '/api/profile/me/requests', { as: me, body: { type: 'erasure' } })).toMatchObject({ status: 400 })
+
+    const opened = await call('POST', '/api/profile/me/requests', { as: me, body: { type: 'access' } })
+    expect(opened).toMatchObject({ status: 201, data: { type: 'access', origin: 'person', status: 'completed' } })
+    expect(opened.data.parts.map((part: { part: string, status: string }) => `${part.part}:${part.status}`)).toEqual(['profile:done', 'identity:done', 'authentication:done', 'authorisation:done'])
+    const { requestId } = opened.data
+
+    const archive = await call('GET', `/api/profile/me/requests/${requestId}/archive`, { as: me })
+    expect(archive).toMatchObject({ status: 200, data: { requestId, subjectId: me, parts: { profile: { attributes: { name: 'Ada Lovelace' } }, identity: { member: 'identity', identityId: me }, authorisation: null } } })
+    expect(archive.headers.get('cache-control')).toBe('no-store')
+    expect(await call('GET', `/api/profile/me/requests/${requestId}/archive`, { as: me, ageSeconds: 20 * 60 })).toMatchObject({ status: 403, data: { code: 'insufficient-assurance' } })
+    expect(await call('GET', `/api/profile/me/requests/${requestId}/archive`, { as: await person() })).toMatchObject({ status: 403, data: { code: 'forbidden' } })
+    expect((await call('GET', '/api/profile/me/requests', { as: me })).data.requests).toEqual([expect.objectContaining({ requestId, archiveUntil: expect.any(String) })])
+  })
+
+  it('keeps an access request open while a member fails, never completing it partially', async () => {
+    const me = await person()
+    authenticationDown = true
+    const opened = await call('POST', '/api/profile/me/requests', { as: me, body: { type: 'access' } })
+    expect(opened.data).toMatchObject({ status: 'open', archiveUntil: null })
+    expect(opened.data.parts.find((part: { part: string }) => part.part === 'authentication').status).toBe('pending')
+    expect(await call('GET', `/api/profile/me/requests/${opened.data.requestId}/archive`, { as: me })).toMatchObject({ status: 403 })
+  })
+
+  it('restricts every detail to the person on a restriction request', async () => {
+    const me = await person()
+    const opened = await call('POST', '/api/profile/me/requests', { as: me, body: { type: 'restriction' } })
+    expect(opened.data).toMatchObject({ type: 'restriction', status: 'completed' })
+    const own = await call('GET', '/api/profile/me', { as: me })
+    expect(Object.values(own.data.settings.audiences)).toEqual(Object.values(own.data.settings.audiences).map(() => 'nobody'))
+  })
+
+  it('verifies a contact detail with a code sent through the notifier, until the detail changes', async () => {
+    const me = await person()
+    await call('PATCH', '/api/profile/me', { as: me, body: { expectedVersion: 1, changes: { email: 'ada@example.com' } } })
+    expect(await call('POST', '/api/profile/me/verification/phone_number/send', { as: me })).toMatchObject({ status: 400, data: { reason: 'nothing-to-verify' } })
+    expect(await call('POST', '/api/profile/me/verification/name/send', { as: me })).toMatchObject({ status: 400 })
+    expect(await call('POST', '/api/profile/me/verification/email/send', { as: me, ageSeconds: 20 * 60 })).toMatchObject({ status: 403, data: { code: 'insufficient-assurance' } })
+
+    expect(await call('POST', '/api/profile/me/verification/email/send', { as: me })).toMatchObject({ status: 200, data: { attribute: 'email', status: 'sent' } })
+    expect(sent).toEqual([{ to: 'ada@example.com', code: expect.stringMatching(/^[0-9]{6}$/), attribute: 'email', channel: 'email' }])
+    const code = sent[0]!.code
+    const wrong = code === '000000' ? '000001' : '000000'
+    expect(await call('POST', '/api/profile/me/verification/email/confirm', { as: me, body: { code: wrong } })).toMatchObject({ status: 400, data: { reason: 'wrong-code' } })
+    const verified = await call('POST', '/api/profile/me/verification/email/confirm', { as: me, body: { code } })
+    expect(verified).toMatchObject({ status: 200, data: { attributes: { email: 'ada@example.com', email_verified: true } } })
+    expect(await call('POST', '/api/profile/me/verification/email/confirm', { as: me, body: { code } })).toMatchObject({ status: 409, data: { reason: 'code-expired' } })
+    expect(await call('POST', '/api/profile/me/verification/email/send', { as: me })).toMatchObject({ status: 200, data: { status: 'verified' } })
+
+    const changed = await call('PATCH', '/api/profile/me', { as: me, body: { expectedVersion: verified.data.version, changes: { email: 'lovelace@example.com' } } })
+    expect(changed.data.attributes).toMatchObject({ email: 'lovelace@example.com', email_verified: false })
+  })
+
+  it('spends a code after too many wrong attempts, and limits how many codes are sent', async () => {
+    const me = await person()
+    await call('PATCH', '/api/profile/me', { as: me, body: { expectedVersion: 1, changes: { phone_number: '+447700900123' } } })
+    await call('POST', '/api/profile/me/verification/phone_number/send', { as: me })
+    const code = sent.at(-1)!.code
+    const wrong = code === '000000' ? '000001' : '000000'
+    for (let i = 0; i < 5; i += 1) await call('POST', '/api/profile/me/verification/phone_number/confirm', { as: me, body: { code: wrong } })
+    expect(await call('POST', '/api/profile/me/verification/phone_number/confirm', { as: me, body: { code } })).toMatchObject({ status: 409, data: { reason: 'code-expired' } })
+    for (let i = 0; i < 4; i += 1) expect((await call('POST', '/api/profile/me/verification/phone_number/send', { as: me })).status).toBe(200)
+    expect(await call('POST', '/api/profile/me/verification/phone_number/send', { as: me })).toMatchObject({ status: 429, data: { code: 'rate-limited' } })
+    expect(sent.every(message => message.channel === 'sms' && message.to === '+447700900123')).toBe(true)
+  })
+
+  it('names a suspended member to the group\'s administrators only, by display name only, asking Authorisation once', async () => {
+    const admin = await person()
+    const member = await person()
+    const suspended = await person()
+    const groupId = uuidv7()
+    await call('PATCH', '/api/profile/me', { as: suspended, body: { expectedVersion: 1, changes: { name: 'Sam Suspended', email: 'sam@example.com' } } })
+    await call('PUT', '/api/profile/me/disclosure', { as: suspended, body: { expectedVersion: 2, settings: { ...DEFAULT_DISCLOSURE_SETTINGS, audiences: { ...DEFAULT_DISCLOSURE_SETTINGS.audiences, email: 'group' } } } })
+    relationships.set(suspended, 'same-group')
+    membershipStates.set(suspended, 'suspended')
+    administrators.add(admin)
+    const body = { subjectIds: [suspended], groupId, purpose: 'administration' }
+
+    expect((await call('POST', '/api/profile/display-names', { as: admin, body })).data).toEqual([{ subjectId: suspended, displayName: { kind: 'name', value: 'Sam Suspended' } }])
+    expect(decisions).toEqual([{ principalId: admin, permission: 'profile.suspended-people:view', groupId }])
+    expect((await call('POST', '/api/profile/display-names', { as: member, body })).data).toEqual([{ subjectId: suspended, displayName: { kind: 'hidden' } }])
+    // A listing, the person page and anyone else never show them.
+    expect((await call('POST', '/api/profile/display-names', { as: admin, body: { ...body, purpose: 'listing' } })).data[0].displayName).toEqual({ kind: 'hidden' })
+    expect((await call('GET', `/api/profile/people/${suspended}?groupId=${groupId}`, { as: admin })).data).toEqual({ subjectId: suspended, displayName: { kind: 'hidden' }, attributes: {} })
+    expect(await call('POST', '/api/profile/display-names', { as: admin, body: { subjectIds: [suspended], purpose: 'administration' } })).toMatchObject({ status: 400 })
+
+    // Nobody suspended in the answer: Authorisation is not asked.
+    decisions.length = 0
+    membershipStates.delete(suspended)
+    expect((await call('POST', '/api/profile/display-names', { as: member, body })).data[0].displayName).toEqual({ kind: 'name', value: 'Sam Suspended' })
+    expect(decisions).toEqual([])
   })
 
   it('limits each viewer\'s lookups per window, and no one else\'s', async () => {

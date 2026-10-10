@@ -1,4 +1,12 @@
-import type { ProfileDatabase, ProfileDisclosureContextPort, ProfileKeyWrapper, ProfileSubjectResolver } from '../../contracts'
+import type {
+  ProfileAccessDecision,
+  ProfileDatabase,
+  ProfileDisclosureContextPort,
+  ProfileKeyWrapper,
+  ProfileNotifier,
+  ProfileRequestCoordinator,
+  ProfileSubjectResolver,
+} from '../../contracts'
 import { ProfileCompositionError } from '../../contracts'
 
 /**
@@ -13,6 +21,9 @@ let database: (ProfileDatabase & { schema: string }) | null = null
 let keyWrapper: ProfileKeyWrapper | null = null
 let disclosureContext: ProfileDisclosureContextPort | null = null
 let subjectResolver: ProfileSubjectResolver | null = null
+let requestCoordinator: ProfileRequestCoordinator | null = null
+let accessDecision: ProfileAccessDecision | null = null
+let notifier: ProfileNotifier | null = null
 
 export function provideProfileDatabase(next: ProfileDatabase): void {
   if (next?.dialect !== 'postgres' || typeof next.pool?.query !== 'function' || typeof next.pool.connect !== 'function') {
@@ -46,6 +57,45 @@ export function provideProfileSubjectResolver(next: ProfileSubjectResolver): voi
   subjectResolver = next
 }
 
+/** Each other member's part of a data-subject request, from iam-integration's `profileRequestCoordinatorFromMembers`. */
+export function provideProfileRequestCoordinator(next: ProfileRequestCoordinator): void {
+  if (typeof next?.exportPart !== 'function') {
+    throw new TypeError('provideProfileRequestCoordinator expects an object with an exportPart(input) function.')
+  }
+  requestCoordinator = next
+}
+
+/** Authorisation's decisions on Profile's permissions, from iam-integration's `profileAccessDecisionFromAuthorisation`. */
+export function provideProfileAccessDecision(next: ProfileAccessDecision): void {
+  if (typeof next?.allows !== 'function') {
+    throw new TypeError('provideProfileAccessDecision expects an object with an allows(input) function.')
+  }
+  accessDecision = next
+}
+
+/** The host's delivery of verification codes to contact details. */
+export function provideProfileNotifier(next: ProfileNotifier): void {
+  if (typeof next?.send !== 'function') {
+    throw new TypeError('provideProfileNotifier expects an object with a send(message) function.')
+  }
+  notifier = next
+}
+
+export function useProfileRequestCoordinator(): ProfileRequestCoordinator {
+  if (!requestCoordinator) throw new ProfileCompositionError('ProfileRequestCoordinator')
+  return requestCoordinator
+}
+
+export function useProfileAccessDecision(): ProfileAccessDecision {
+  if (!accessDecision) throw new ProfileCompositionError('ProfileAccessDecision')
+  return accessDecision
+}
+
+export function useProfileNotifier(): ProfileNotifier {
+  if (!notifier) throw new ProfileCompositionError('ProfileNotifier')
+  return notifier
+}
+
 export function useProfileSubjectResolver(): ProfileSubjectResolver {
   if (!subjectResolver) throw new ProfileCompositionError('ProfileSubjectResolver')
   return subjectResolver
@@ -72,4 +122,7 @@ export function clearProfileComposition(): void {
   keyWrapper = null
   disclosureContext = null
   subjectResolver = null
+  requestCoordinator = null
+  accessDecision = null
+  notifier = null
 }

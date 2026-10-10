@@ -28,10 +28,10 @@ The attributes are named as OpenID Connect standard claims:
 | `preferred_username` | A safe name of up to 64 code points |
 | `locale` | A BCP 47 tag, e.g. `en-GB` |
 | `zoneinfo` | An IANA time zone, e.g. `Europe/London` |
-| `email` | An email address. `email_verified` is always `false` |
-| `phone_number` | E.164, e.g. `+447700900123`. `phone_number_verified` is always `false` |
+| `email` | An email address, with `email_verified` |
+| `phone_number` | E.164, e.g. `+447700900123`, with `phone_number_verified` |
 
-Contact details are stored unverified in this version, and Profile never sends anything to them. Verification needs a host notification port and comes in a later version.
+Contact details are stored unverified, and become verified only when the person types back a code Profile sent to them through the host's notifier (§15). Changing one makes it unverified again. Profile sends nothing else to them.
 
 A change names only the attributes it changes: a value sets one, `null` removes it. An unknown attribute, an empty change or an attempt to set a verification claim is refused (`validation-failed`, with problem codes only, never the value).
 
@@ -58,8 +58,10 @@ Identity's disclosure-context port says how the viewer is related to each person
 1. The person sees everything of their own, whatever their standing.
 2. A `suspended`, `closing` or `gone` person is hidden from everyone else.
 3. A `paused` person is hidden from listings (`purpose: 'listing'`: member lists, profiles, search), but stays attributed on past contributions (`purpose: 'attribution'`).
-4. Otherwise each attribute is shown only to its audience: `same-group` reaches `group` and `tenant`; `same-tenant` reaches `tenant`; `none` reaches nothing.
-5. A former member (§5.1) is shown by display name only, never by other attributes.
+   With a group context, the subject's own membership of that group makes their standing stricter (`standingInGroup`): a member paused there counts as `paused` there, and one suspended there as `suspended`, as iam-integration's pausing and suspension process requires.
+4. In an `administration` lookup (a group's member list as its administrators see it), a `suspended` fellow member of the group is shown by display name only, never other attributes, and only within the audience the person chose for that name, to a viewer who holds `profile.suspended-people:view` on the group now. Profile asks Authorisation through the access-decision port (§9), once per lookup and only when the answer could name someone. Otherwise it is a listing.
+5. Otherwise each attribute is shown only to its audience: `same-group` reaches `group` and `tenant`; `same-tenant` reaches `tenant`; `none` reaches nothing.
+6. A former member (§5.1) is shown by display name only, never by other attributes.
 
 A display name is returned as a code, never as text the host must translate: `{ kind: 'name', value }`, `{ kind: 'pseudonym', number }`, `{ kind: 'former-member' }` or `{ kind: 'hidden' }`. Presentation localises them, for example "Former member 7", "Former member", "Member". A hidden answer is the same whether or not the person exists or has a record.
 
@@ -105,10 +107,16 @@ Written to Profile's transactional outbox in the same transaction as the change,
 | `profile.changed` | `identityId`, the attribute names changed, whether disclosure changed |
 | `profile.departure-anonymised` | `identityId`, `groupId`: drop any name cached for them there |
 | `profile.anonymised` | `identityId`, `reasonCode`: drop every name cached for them |
+| `profile.contact-verified` | `identityId`, `attribute` |
+| `profile.request-opened` | `requestId`, `identityId`, `type`, `origin`, `parts`, `dueAt` (§14) |
+| `profile.request-completed` | `requestId`, `identityId`, each part's `status` and `reasonCode` |
+| `profile.request-escalated` | `requestId`, `identityId`, `reasonCode` (`due-soon`, `group-rename-overdue`): operators act |
+| `profile.legal-hold-placed` | `holdId`, `identityId`, `parts`, `reasonCode`, `endsAt` |
+| `profile.legal-hold-ended` | `holdId`, `identityId`, `parts`, `released` (no hold covers them any more), `identityClosed`, `reasonCode`: the host's handler erases the released parts of a closed identity |
 
 Events carry identifiers, attribute names and codes only: never a value.
 
-Profile consumes `identity.provisioned`, `membership.ended` and `identity.closed`, idempotently by event id. It reads pausing, suspension and closure from the disclosure-context port at each lookup instead, so a standing is never stale.
+Profile consumes `identity.provisioned`, `membership.ended`, `identity.closed`, `identity.paused` and `group.renamed`, idempotently by event id; the last two complete parts of data-subject requests (§14). It reads pausing, suspension and closure from the disclosure-context port at each lookup instead, so a standing is never stale.
 
 ## 9. Ports
 
@@ -118,6 +126,15 @@ Profile consumes `identity.provisioned`, `membership.ended` and `identity.closed
 | `ProfileKeyWrapper` | Yes | Wraps and unwraps each person's data key with a versioned host key (KMS, HSM, vault; `createLocalProfileKeyWrapper` for development) |
 | `ProfileDisclosureContext` | Yes | Identity's disclosure-context port, read `bounded` |
 | `ProfileSubjectResolver` | For the endpoints | The signed-in person for an HTTP request, from Authentication through the host |
+| `ProfileRequestCoordinator` | For data-subject requests | Each other member's part of an access request (§14), from iam-integration's `profileRequestCoordinatorFromMembers`; a member's failure rejects that part only |
+| `ProfileAccessDecision` | For `administration` lookups | Whether the viewer holds one of Profile's permissions on a group now, from iam-integration's `profileAccessDecisionFromAuthorisation` |
+| `ProfileNotifier` | For verification | Delivers a verification code by email or SMS (§15); nothing else |
+
+Profile's permission, for the host to add to Authorisation's catalogue (`PROFILE_PERMISSIONS`):
+
+| Permission | Risk | Effect | Allows |
+|---|---|---|---|
+| `profile.suspended-people:view` | `high` | `view` | Seeing the display names of a group's suspended members, in an `administration` lookup. `high` because it discloses personal data otherwise hidden, so Authorisation's `*:view` wildcards never reach it: a host names it in the `owner` and `administrator` roles |
 
 ## 10. Server functions
 
@@ -136,12 +153,24 @@ Profile consumes `identity.provisioned`, `membership.ended` and `identity.closed
 | `eraseProfile({ identityId, reasonCode, correlationId })` | §6 |
 | `rewrapProfileKeys({ limit? })`, `profileKeyVersionsInUse()` | Key rotation (§6) |
 | `relayProfileOutbox({ publish, limit? })` | §8 |
+| `listProfileDepartures({ subjectId })` | The groups the person has left: identifiers, dates and whether they chose anonymity there |
+| `openProfileRequest({ subjectId, type, origin, reasonCode?, parts?, groupIds?, correlationId })` | Opens a request (§14) |
+| `listProfileRequests({ subjectId })`, `getProfileRequest({ requestId })` | The person's requests; one request, for operators |
+| `getProfileRequestArchive({ subjectId, requestId })` | A completed access request's archive, while it lasts |
+| `settleProfileRequestPart({ requestId, part, outcome, reasonCode?, correlationId })` | An operator marks a part `done`, or `exempt` with a reason code |
+| `recordProfileRequestPart({ identityId, part, correlationId })` | The host's handler reports Authentication's or Authorisation's erasure done |
+| `placeProfileLegalHold(...)`, `releaseProfileLegalHold(...)`, `listProfileLegalHolds({ identityId })` | Legal holds (§14), for operators |
+| `profileLegalHoldParts(identityId)` | The parts under hold now, for the host's closure handler |
+| `runProfileMaintenance()` | Ends holds on their date, deletes expired archives, escalates requests, retries failed access parts, drops expired codes |
+| `startProfileContactVerification(...)`, `confirmProfileContactVerification(...)` | §15 |
+
+The operators' functions are server-only: a host never exposes them over HTTP.
 
 The caller supplies `subjectId` and `viewerId` from the signed-in principal, never from a request body.
 
 ## 11. Versioning
 
-This is contract version 1, provided by package 0.3. Before 1.0, breaking changes are listed here and in the release notes. Package 0.2 adds the HTTP API (§12), record versions, the `insufficient-assurance`, `conflict` and `rate-limited` codes and the subject-resolver port, without changing what version 0.1 provided. Package 0.3 adds the presentation (§13), without changing the contract.
+This is contract version 1, provided by package 0.4. Before 1.0, breaking changes are listed here and in the release notes. Package 0.2 adds the HTTP API (§12), record versions, the `insufficient-assurance`, `conflict` and `rate-limited` codes and the subject-resolver port, without changing what version 0.1 provided. Package 0.3 adds the presentation (§13), without changing the contract. Package 0.4 adds data-subject requests and legal holds (§14), contact-detail verification (§15), the `administration` purpose, the membership's standing in the group context, Profile's permission and three optional ports. It changes one thing a client may rely on: `email_verified` and `phone_number_verified` may now be `true`.
 
 ## 12. HTTP API
 
@@ -154,8 +183,14 @@ Under `/api/profile`. Every endpoint takes the person or viewer only from the ho
 | `PUT /me/disclosure` | `{ expectedVersion, settings }` (§4) | Signed in |
 | `POST /me/departures/:groupId/anonymise` | §5.1 | Signed in |
 | `GET /me/export` | Profile's part of the person's export, `Cache-Control: no-store` | A sign-in within 15 minutes |
-| `POST /display-names` | `{ subjectIds (≤ 200), groupId?, purpose }` (§5) | Signed in; rate-limited |
+| `POST /display-names` | `{ subjectIds (≤ 200), groupId?, purpose }` (§5); `administration` needs `groupId` | Signed in; rate-limited |
 | `GET /people/:subjectId?groupId=` | One person's display name and disclosed attributes, as a listing | Signed in; rate-limited |
+| `GET /me/departures` | The groups the person has left (§10) | Signed in |
+| `GET /me/requests` | The person's requests and each part's progress (§14) | Signed in |
+| `POST /me/requests` | `{ type }`: an `access` or `restriction` request; 201 | A sign-in within 15 minutes |
+| `GET /me/requests/:requestId/archive` | A completed access request's archive, `Cache-Control: no-store` | A sign-in within 15 minutes |
+| `POST /me/verification/:attribute/send` | Sends a code to `email` or `phone_number` (§15) | A sign-in within 15 minutes; 5 an hour |
+| `POST /me/verification/:attribute/confirm` | `{ code }` | Signed in |
 
 A change sent against an older version than the one stored is refused with `conflict` (`version-changed`), so one tab cannot silently undo another's edit; the client reads `/me` again and retries.
 
@@ -175,6 +210,12 @@ The layer registers default pages and `Profile*` components (`modules/presentati
 |---|---|---|
 | `profile` | `/profile` | The signed-in person's own profile: their details, who sees each, the name others see, their departure choice, and a download of their data |
 | `person` | `/profile/people/:subjectId` | Another person's display name and the details they disclose to the viewer, now. `?groupId=` names the group in view, so a leaver is shown under its departure data policy |
+| `departures` | `/profile/departures` | The groups the person has left, each named by `ProfileGroupName`, and the choice, after confirming, to be shown as "Former member" in one of them |
+| `requests` | `/profile/requests` | The person's requests: a copy of all their data, or a restriction; each request's progress and the archive's download; deleting their data is closing the account, linked from `profile.routes.closeAccount` |
+
+The own-profile page links to both, and offers verification for each saved contact detail.
+
+**Group names.** Group names are Identity's. `ProfileGroupName` (prop `groupId`) reads "A group you left"; a host composing Identity backs it with a component of the same name that shows Identity's name for the group (`formerGroupNames` in Identity's own view of the person), so neither layer imports the other.
 
 `profile: { pages: { paths: { ... } } }` moves the pages (the person path must keep `:subjectId`); `profile: { pages: { enabled: false } }` keeps the components without the pages; `profile: { presentation: false }` registers nothing. Every page is sent with `X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'`, `Referrer-Policy: no-referrer` and `Cache-Control: no-store`, unless the host sets those headers itself. The person page's document title is always "Profile": a name never reaches the browser's history or tab list from it.
 
@@ -200,3 +241,32 @@ It renders "Member" on the server and until the answer arrives, and whenever Pro
 - `edge-base-active` on `fill-base-default`: the keyboard focus indicator.
 
 **Accessibility.** WCAG 2.2 AA: landmarks and one `h1` per page, labelled sections, fieldsets and fields, errors announced and focused (the first invalid field takes focus), status messages announced politely, keyboard operation throughout, 24-pixel targets, reflow at 320 CSS pixels. Browser tests (`tests/e2e/pages.spec.ts`) run axe's WCAG 2.2 AA rules and check non-text contrast with Theme Manager's real styles.
+
+## 14. Data-subject requests and legal holds
+
+Profile is the person's single point of contact for requests about their data ([iam-integration's process](https://github.com/nuxt4-layers/iam-integration/blob/a3a414350c951bd2fba7acbb893962e4a62ae81d/docs/processes/data-subject-requests.md)). It records each request and each member's part, and keeps legal holds; each member answers for what it holds.
+
+| Type | Who opens it | Parts by default | What happens |
+|---|---|---|---|
+| `access` | The person (recent sign-in) or an operator | `profile`, `identity`, `authentication`, `authorisation` | Profile's own part, then each other member's through the coordination port, one at a time; each bundle sealed with the person's key. Complete when every part is answered; the archive is downloadable by the person for 7 days, then deleted |
+| `restriction` | The person (recent sign-in) or an operator | `profile` (and `identity` if named) | Every audience becomes `nobody` at once; Identity's part is done on `identity.paused` |
+| `correction` | An operator | `profile` (and `identity` with `groupIds`) | Identity's part is done when every group named is renamed (`group.renamed`); raised to operators at half the deadline |
+| `erasure` | An operator (the person closes their account) | `profile`, `identity`, `authentication`, `authorisation` | Done as closure completes: Identity's on `identity.closed` (and any renames), Profile's on its erasure, the others as the host's handler reports them (`recordProfileRequestPart`) |
+
+A part is `pending`, `done`, `exempt` (with a reason code) or `held`; a request completes once every part is `done` or `exempt`. It is due one calendar month after opening (`PROFILE_REQUEST_POLICY`), and raised to operators (`profile.request-escalated`) 7 days before. Requests outlive an erasure, as identifiers, codes and times only.
+
+**Legal holds** are placed and released by operators, with a reason code and an end date at most 7 years ahead. They cover any of `profile`, `authentication` and `authorisation`, and defer only those parts' erasure, never access, correction or restriction, and never Identity's closure:
+
+- On `identity.closed`, a hold covering Profile keeps the record, readable by no function (`getOwnProfile` and `exportProfileData` answer null; changes are `forbidden`), and `eraseProfile` is refused (`conflict`, `legal-hold`).
+- The host's closure handler reads `profileLegalHoldParts` and leaves the held parts of the other members alone.
+- When a hold ends (released, or its end date in maintenance), `profile.legal-hold-ended` names the parts no hold covers any more; Profile erases a closed person's record if Profile's part is among them, and the host's handler erases the others.
+
+## 15. Contact-detail verification
+
+The person verifies a saved `email` or `phone_number`: Profile sends a 6-digit code through the host's notifier (email, or SMS for a telephone number), and the person types it back.
+
+- Sending needs a sign-in within 15 minutes; 5 codes per detail an hour (`rate-limited`).
+- A code lasts 10 minutes and allows 5 attempts; a wrong one is `validation-failed` (`wrong-code`), a spent, expired or unsent one `conflict` (`code-expired`).
+- The code is kept only as an HMAC under the person's own data key, bound to the identity, the attribute and the value it was sent to: it verifies nothing else, and is destroyed with the key.
+- A verified detail becomes unverified when it changes. `profile.contact-verified` carries the identity and the attribute name only.
+- Profile sends nothing else to a contact detail.

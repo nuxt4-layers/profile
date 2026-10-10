@@ -65,9 +65,17 @@ export const updateProfileRequestSchema = z.strictObject({ expectedVersion, chan
 /** `PUT /api/profile/me/disclosure` */
 export const disclosureRequestSchema = z.strictObject({ expectedVersion, settings: disclosureSettingsSchema })
 
-/** `POST /api/profile/display-names` */
+/** `POST /api/profile/display-names`. An `administration` lookup names the group it is for. */
 export const displayNamesRequestSchema = z.strictObject({
   subjectIds: z.array(identifierSchema).min(1).max(DISCLOSURE_MAX_SUBJECTS),
   groupId: identifierSchema.nullable().optional(),
   purpose: z.enum(LOOKUP_PURPOSES),
-})
+}).refine(body => body.purpose !== 'administration' || typeof body.groupId === 'string', 'group-required')
+
+/** A group the person has left, as their own page lists it. The group's name is Identity's, shown through the host. */
+export interface ProfileDepartureView {
+  groupId: string
+  endedAt: string
+  /** The person chose to be shown as "Former member" there. */
+  anonymised: boolean
+}
