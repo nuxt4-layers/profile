@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1",
   "name": "@nuxt4-layers/profile",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "classification": "foundation",
   "provides": [
     {
@@ -21,12 +21,20 @@
       "contractVersion": "1",
       "optional": false,
       "purpose": "the signed-in principal for each /api/profile request, through the host's subject resolver; there is no package dependency"
+    },
+    {
+      "capability": "SemanticPresentationTheme",
+      "contractVersion": "1",
+      "optional": true,
+      "purpose": "styles the default pages and components; without it they render unstyled but fully functional"
     }
   ],
   "publicExports": [
     ".",
     "./contracts",
-    "./capability"
+    "./capability",
+    "./presentation",
+    "./tailwind.css"
   ],
   "ports": [
     {

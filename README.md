@@ -4,7 +4,7 @@ Nuxt 4 foundation layer for the personal data that describes a person: what is h
 
 Part of the `nuxt4-layers` Identity and Access Management (IAM) suite, with [`authentication`](https://github.com/nuxt4-layers/authentication), `identity`, [`authorisation`](https://github.com/nuxt4-layers/authorisation) and [`iam-integration`](https://github.com/nuxt4-layers/iam-integration).
 
-**Status:** phase 2 of 5: the contract, encrypted PostgreSQL storage, disclosure rules, the departure data policy, Identity's events, erasure, export and key rotation, and the `/api/profile/*` endpoints with `useProfile()`. Default pages follow (see [docs/roadmap.md](docs/roadmap.md)).
+**Status:** phase 3 of 5: the contract, encrypted PostgreSQL storage, disclosure rules, the departure data policy, Identity's events, erasure, export and key rotation, the `/api/profile/*` endpoints with `useProfile()`, and accessible default pages with `ProfilePersonName`. Requests and verification follow (see [docs/roadmap.md](docs/roadmap.md)).
 
 ## Owns
 
@@ -33,7 +33,8 @@ Profile may hold the same email address as a sign-in identifier held by Authenti
 | Consumes from Identity | Events `identity.provisioned`, `membership.ended`, `identity.closed` | Create the record, keep how a leaver is shown, erase on closure |
 | Consumes from the host | Key-wrapping port | Wraps each person's data key with a versioned host key (KMS, HSM, vault) |
 | Provides to domain capabilities | `lookupProfileDisplayNames` | Names for up to 200 identifiers, as the viewer may see them |
-| Provides to the person | Own record, disclosure settings, departure anonymity, export | `/api/profile/*` endpoints and `useProfile()`; pages in phase 3 |
+| Provides to the person | Own record, disclosure settings, departure anonymity, export | `/api/profile/*` endpoints, `useProfile()` and the default pages |
+| Provides to hosts' pages | `ProfilePersonName` | A person's name as the viewer may see it, for Identity's `IdentityPersonName` and any other page |
 | Publishes | `profile.created`, `profile.changed`, `profile.departure-anonymised`, `profile.anonymised` | Identifiers, attribute names and codes only |
 
 ## Documentation
@@ -48,6 +49,7 @@ Profile may hold the same email address as a sign-in identifier held by Authenti
 - `pnpm install`, then `pnpm dev:prepare`
 - `pnpm check`: typecheck and tests. The PostgreSQL suite needs `PROFILE_TEST_DATABASE_URL` (admin URL of a local, disposable PostgreSQL 16); it skips locally without it and fails in CI
 - `pnpm build:playground`: proves the layer composes in a host
+- `pnpm test:e2e`: the default pages in a browser with axe. Needs `PROFILE_TEST_DATABASE_URL`; locally set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` if Playwright's own browser is not installed
 
 ## Governing decisions and specifications
 
