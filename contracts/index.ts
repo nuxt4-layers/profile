@@ -141,6 +141,7 @@ export type {
   IdentityEventLike,
   PostgresPoolLike,
   ProfileAccessDecision,
+  ProfileClock,
   ProfileDatabase,
   ProfileDisclosureContextPort,
   ProfileEventPublisher,

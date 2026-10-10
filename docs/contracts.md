@@ -129,6 +129,7 @@ Profile consumes `identity.provisioned`, `membership.ended`, `identity.closed`, 
 | `ProfileRequestCoordinator` | For data-subject requests | Each other member's part of an access request (§14), from iam-integration's `profileRequestCoordinatorFromMembers`; a member's failure rejects that part only |
 | `ProfileAccessDecision` | For `administration` lookups | Whether the viewer holds one of Profile's permissions on a group now, from iam-integration's `profileAccessDecisionFromAuthorisation` |
 | `ProfileNotifier` | For verification | Delivers a verification code by email or SMS (§15); nothing else |
+| `ProfileClock` | No: the system clock without it | The current time, `{ now(): Date }`, the same clock the host gives every member (§16) |
 
 Profile's permission, for the host to add to Authorisation's catalogue (`PROFILE_PERMISSIONS`):
 
@@ -170,7 +171,7 @@ The caller supplies `subjectId` and `viewerId` from the signed-in principal, nev
 
 ## 11. Versioning
 
-This is contract version 1, provided by package 0.4. Before 1.0, breaking changes are listed here and in the release notes. Package 0.2 adds the HTTP API (§12), record versions, the `insufficient-assurance`, `conflict` and `rate-limited` codes and the subject-resolver port, without changing what version 0.1 provided. Package 0.3 adds the presentation (§13), without changing the contract. Package 0.4 adds data-subject requests and legal holds (§14), contact-detail verification (§15), the `administration` purpose, the membership's standing in the group context, Profile's permission and three optional ports. It changes one thing a client may rely on: `email_verified` and `phone_number_verified` may now be `true`.
+This is contract version 1, provided by package 0.4. Before 1.0, breaking changes are listed here and in the release notes. Package 0.2 adds the HTTP API (§12), record versions, the `insufficient-assurance`, `conflict` and `rate-limited` codes and the subject-resolver port, without changing what version 0.1 provided. Package 0.3 adds the presentation (§13), without changing the contract. Package 0.4 adds data-subject requests and legal holds (§14), contact-detail verification (§15), the `administration` purpose, the membership's standing in the group context, Profile's permission and three optional ports. The optional clock port (§16) is an addition that changes nothing a client may rely on. It changes one thing a client may rely on: `email_verified` and `phone_number_verified` may now be `true`.
 
 ## 12. HTTP API
 
@@ -270,3 +271,11 @@ The person verifies a saved `email` or `phone_number`: Profile sends a 6-digit c
 - The code is kept only as an HMAC under the person's own data key, bound to the identity, the attribute and the value it was sent to: it verifies nothing else, and is destroyed with the key.
 - A verified detail becomes unverified when it changes. `profile.contact-verified` carries the identity and the attribute name only.
 - Profile sends nothing else to a contact detail.
+
+## 16. Time
+
+Profile reads the current time from the clock the host supplies (`provideProfileClock({ now })`), as [iam-integration's architecture §7](https://github.com/nuxt4-layers/iam-integration/blob/e986245d746507bf7093ca203e346ab1b571e3a8/docs/architecture.md#7-time) asks of every member; without one, it uses the system clock. A host supplies the same clock to every member, or none.
+
+- Every time Profile keeps or judges comes from the clock: the times it writes (records, keys, erasures, departures, requests, parts, holds, closures, codes, the outbox) and events' `occurredAt`; when a hold, a request's due date or escalation, an access archive, a verification code or its sending window, and a lookup rate-limit window ends; and whether a sign-in is recent enough for the endpoints that need one. The database judges no time of its own: each such time is passed to it from the clock.
+- A clock that throws, or answers anything but a valid `Date`, fails the operation as `unavailable`. Profile never falls back to another time.
+- The clock is trusted like a key: whoever supplies it can end a hold, an archive or a code's life early. Only the host composes it, from server code; no request can set or move it. A clock that can be moved is for tests only.

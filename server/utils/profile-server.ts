@@ -19,6 +19,7 @@ import type { DepartureExport, OwnProfile } from '../internal/service'
 import { createService } from '../internal/service'
 import {
   useProfileAccessDecision,
+  useProfileClock,
   useProfileDatabase,
   useProfileDisclosureContext,
   useProfileKeyWrapper,
@@ -30,7 +31,9 @@ import {
  * PUBLIC server functions (auto-imported for the host's server code). Each
  * takes the person (`subjectId`) or the viewer (`viewerId`) from the caller,
  * which must take it from the signed-in principal, never from a request
- * body. Every one fails closed with `ProfileFailure`.
+ * body. Every one fails closed with `ProfileFailure`. Every time they keep
+ * or judge comes from the host's clock (`provideProfileClock`), or the
+ * system clock when none is supplied.
  */
 
 let migration: Promise<string[]> | null = null
@@ -60,6 +63,8 @@ async function service() {
     coordinator: useProfileRequestCoordinator,
     accessDecision: useProfileAccessDecision,
     notifier: useProfileNotifier,
+    // Read at each use, so every time comes from the host's clock (or the system clock).
+    now: () => useProfileClock().now(),
   })
 }
 

@@ -13,6 +13,7 @@ import { originRejected } from '../server/internal/http'
 import {
   clearProfileComposition,
   provideProfileAccessDecision,
+  provideProfileClock,
   provideProfileDatabase,
   provideProfileDisclosureContext,
   provideProfileKeyWrapper,
@@ -20,7 +21,7 @@ import {
   provideProfileRequestCoordinator,
   provideProfileSubjectResolver,
 } from '../server/utils/profile-composition'
-import { applyProfileIdentityEvent } from '../server/utils/profile-server'
+import { applyProfileIdentityEvent, listProfileLegalHolds, placeProfileLegalHold, profileLegalHoldParts, runProfileMaintenance, updateProfile } from '../server/utils/profile-server'
 import { createLocalProfileKeyWrapper } from '../server/utils/profile-keys'
 import { createTestDatabase, hasDatabase, requireDatabaseInCi } from './support/database'
 
@@ -381,6 +382,52 @@ describe.skipIf(!hasDatabase)('the /api/profile endpoints', () => {
     expect(await call('POST', '/api/profile/display-names', { as: viewer, body })).toMatchObject({ status: 429, data: { code: 'rate-limited' } })
     expect(await call('GET', `/api/profile/people/${other}`, { as: viewer })).toMatchObject({ status: 429 })
     expect(await call('POST', '/api/profile/display-names', { as: other, body })).toMatchObject({ status: 200 })
+  })
+
+  describe('the clock', () => {
+    const MINUTE = 60_000
+
+    it('takes every time from the supplied clock: holds end, codes expire and sign-ins age by it', async () => {
+      let offset = 0
+      provideProfileClock({ now: () => new Date(Date.now() + offset) })
+      const me = await person()
+      const hold = await placeProfileLegalHold({ identityId: me, parts: ['authorisation'], reasonCode: 'litigation', endsAt: new Date(Date.now() + 60 * MINUTE).toISOString(), correlationId: uuidv7() })
+      await call('PATCH', '/api/profile/me', { as: me, body: { expectedVersion: 1, changes: { email: 'ada@example.com' } } })
+      expect(await call('POST', '/api/profile/me/verification/email/send', { as: me })).toMatchObject({ status: 200, data: { status: 'sent' } })
+      const code = sent.at(-1)!.code
+
+      // Eleven minutes later by the clock (not by the system's): the code has expired, and the sign-in is no longer recent.
+      offset = 11 * MINUTE
+      expect(await call('POST', '/api/profile/me/verification/email/confirm', { as: me, body: { code } })).toMatchObject({ status: 409, data: { reason: 'code-expired' } })
+      offset = 16 * MINUTE
+      expect(await call('GET', '/api/profile/me/export', { as: me })).toMatchObject({ status: 403, data: { code: 'insufficient-assurance' } })
+      expect(await profileLegalHoldParts(me)).toEqual(['authorisation'])
+
+      // Past the hold's end by the clock: maintenance ends it, and the times written are the clock's.
+      offset = 61 * MINUTE
+      expect(await profileLegalHoldParts(me)).toEqual([])
+      const before = Date.now() + offset
+      expect((await runProfileMaintenance()).holdsEnded).toBeGreaterThanOrEqual(1)
+      const [ended] = await listProfileLegalHolds({ identityId: me })
+      expect(ended).toMatchObject({ holdId: hold.holdId, endedAt: expect.any(String) })
+      expect(Date.parse(ended!.endedAt!)).toBeGreaterThanOrEqual(before)
+      const { rows } = await pool.query(`select "event" from "profile"."outbox" where "event"->>'type' = 'profile.legal-hold-ended' and "event"->'data'->>'holdId' = $1`, [hold.holdId])
+      expect(Date.parse(rows[0].event.occurredAt)).toBeGreaterThanOrEqual(before)
+    })
+
+    it('fails closed when the clock answers an invalid time or fails, never falling back to another time', async () => {
+      const me = await person()
+      for (const now of [() => new Date(Number.NaN), () => '2026-10-10T00:00:00Z' as unknown as Date, () => { throw new Error('clock down') }]) {
+        provideProfileClock({ now })
+        await expect(updateProfile({ subjectId: me, changes: { name: 'Ada' }, correlationId: uuidv7() })).rejects.toMatchObject({ name: 'ProfileFailure', code: 'unavailable' })
+        await expect(runProfileMaintenance()).rejects.toMatchObject({ code: 'unavailable' })
+        expect(await call('PATCH', '/api/profile/me', { as: me, body: { expectedVersion: 1, changes: { name: 'Ada' } } })).toMatchObject({ status: 503, data: { code: 'unavailable' } })
+        expect(await call('GET', '/api/profile/me/export', { as: me })).toMatchObject({ status: 503, data: { code: 'unavailable' } })
+      }
+      // Nothing was written under the bad clock.
+      const { rows } = await pool.query(`select "version" from "profile"."record" where "identity_id" = $1`, [me])
+      expect(rows).toEqual([{ version: 1 }])
+    })
   })
 
   it('refuses state-changing requests from another origin, or with none configured', () => {

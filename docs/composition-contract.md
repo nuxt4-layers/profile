@@ -17,6 +17,7 @@ Profile has **no package dependency** on Identity, Authentication, Authorisation
 - For data-subject requests (contract §14), supplies the coordination port (`provideProfileRequestCoordinator`) from iam-integration's `profileRequestCoordinatorFromMembers` over Identity's, Authentication's and Authorisation's exports, and gives its operators tooling over `openProfileRequest`, `settleProfileRequestPart`, `placeProfileLegalHold` and `releaseProfileLegalHold`, never over HTTP. Schedules `runProfileMaintenance()` every few minutes, and alerts operators on `profile.request-escalated`.
 - For the administrators' view of suspended members, supplies the access-decision port (`provideProfileAccessDecision`) from iam-integration's `profileAccessDecisionFromAuthorisation`, passes `PROFILE_PERMISSIONS` to Authorisation's catalogue and names them in its built-in roles (`rolesWithIdentityPermissions`), and asks for names with the purpose `administration` on its group administration pages.
 - For contact-detail verification (contract §15), supplies a notifier (`provideProfileNotifier`) that delivers the code by email or SMS, in the person's locale, and nothing else.
+- Optionally supplies the suite's clock (`provideProfileClock`, contract §16): the same `{ now(): Date }` it gives every member, or none, so that each uses the system clock. Only its server code composes it, and a clock that can be moved is for tests only.
 - Schedules `rewrapProfileKeys()` after each change of wrapping-key version, and retires a version only when `profileKeyVersionsInUse()` no longer lists it and every backup taken under it has expired.
 - For the default pages (contract §13): imports Theme Manager's `presentation.css` and then `@nuxt4-layers/profile/tailwind.css` into its Tailwind stylesheet, and sets `profile.routes.signIn` to its sign-in page; or moves the pages, or turns them off (`profile: { pages: { enabled: false } }`).
 - Backs `ProfileGroupName` with Identity's name for the group, through a component of that name in its own app (below), so the departures page names the groups the person left.
@@ -38,6 +39,7 @@ export default defineNitroPlugin(() => {
   provideProfileRequestCoordinator(profileRequestCoordinatorFromMembers({ exportIdentity: exportIdentityData, exportAuthentication: exportAuthenticationData, exportAuthorisation: exportAuthorisationData }))
   provideProfileAccessDecision(profileAccessDecisionFromAuthorisation({ authorise }))
   provideProfileNotifier(myNotifier)
+  provideProfileClock(suiteClock) // optional: the same clock as every other member, or none
   migrateProfileDatabase()
 })
 ```
