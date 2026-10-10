@@ -24,6 +24,7 @@ import {
   useProfileDisclosureContext,
   useProfileKeyWrapper,
   useProfileNotifier,
+  useProfileRetention,
   useProfileRequestCoordinator,
 } from './profile-composition'
 
@@ -63,6 +64,7 @@ async function service() {
     coordinator: useProfileRequestCoordinator,
     accessDecision: useProfileAccessDecision,
     notifier: useProfileNotifier,
+    retention: useProfileRetention,
     // Read at each use, so every time comes from the host's clock (or the system clock).
     now: () => useProfileClock().now(),
   })

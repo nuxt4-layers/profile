@@ -95,6 +95,9 @@ export type {
   RequestStatus,
   RequestType,
   RequestView,
+  ProfileRetention,
+  ProfileRetentionInput,
+  ProfileRetentionSetting,
 } from '../shared/requests'
 export {
   COORDINATED_PARTS,
@@ -107,6 +110,9 @@ export {
   personRequestSchema,
   placeHoldSchema,
   PROFILE_REQUEST_POLICY,
+  PROFILE_RETENTION_BOUNDS,
+  profileRetentionInputSchema,
+  resolveProfileRetention,
   REQUEST_ORIGINS,
   REQUEST_PARTS,
   REQUEST_STATUSES,

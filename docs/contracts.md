@@ -113,10 +113,12 @@ Written to Profile's transactional outbox in the same transaction as the change,
 | `profile.request-escalated` | `requestId`, `identityId`, `reasonCode` (`due-soon`, `group-rename-overdue`): operators act |
 | `profile.legal-hold-placed` | `holdId`, `identityId`, `parts`, `reasonCode`, `endsAt` |
 | `profile.legal-hold-ended` | `holdId`, `identityId`, `parts`, `released` (no hold covers them any more), `identityClosed`, `reasonCode`: the host's handler erases the released parts of a closed identity |
+| `profile.group-disposed` | `groupId`, how many departures were removed and how many a hold kept (§17): Identity's confirmation |
+| `profile.retention-applied` | How many delivered events, completed requests and ended holds were deleted, when a run deleted anything (§17) |
 
 Events carry identifiers, attribute names and codes only: never a value.
 
-Profile consumes `identity.provisioned`, `membership.ended`, `identity.closed`, `identity.paused` and `group.renamed`, idempotently by event id; the last two complete parts of data-subject requests (§14). It reads pausing, suspension and closure from the disclosure-context port at each lookup instead, so a standing is never stale.
+Profile consumes `identity.provisioned`, `membership.ended`, `identity.closed`, `identity.paused`, `group.renamed`, `group.deleted` (only when its disposal is due) and `group.disposal-due`, idempotently by event id; `identity.paused` and `group.renamed` complete parts of data-subject requests (§14), and the last two dispose of a deleted group's part (§17). It reads pausing, suspension and closure from the disclosure-context port at each lookup instead, so a standing is never stale.
 
 ## 9. Ports
 
@@ -171,7 +173,7 @@ The caller supplies `subjectId` and `viewerId` from the signed-in principal, nev
 
 ## 11. Versioning
 
-This is contract version 1, provided by package 0.4. Before 1.0, breaking changes are listed here and in the release notes. Package 0.2 adds the HTTP API (§12), record versions, the `insufficient-assurance`, `conflict` and `rate-limited` codes and the subject-resolver port, without changing what version 0.1 provided. Package 0.3 adds the presentation (§13), without changing the contract. Package 0.4 adds data-subject requests and legal holds (§14), contact-detail verification (§15), the `administration` purpose, the membership's standing in the group context, Profile's permission and three optional ports. The optional clock port (§16) is an addition that changes nothing a client may rely on. It changes one thing a client may rely on: `email_verified` and `phone_number_verified` may now be `true`.
+This is contract version 1, provided by package 0.4. Before 1.0, breaking changes are listed here and in the release notes. Package 0.2 adds the HTTP API (§12), record versions, the `insufficient-assurance`, `conflict` and `rate-limited` codes and the subject-resolver port, without changing what version 0.1 provided. Package 0.3 adds the presentation (§13), without changing the contract. Package 0.4 adds data-subject requests and legal holds (§14), contact-detail verification (§15), the `administration` purpose, the membership's standing in the group context, Profile's permission and three optional ports. The optional clock port (§16) is an addition that changes nothing a client may rely on. End of life (§17) adds the `profile.group-disposed` and `profile.retention-applied` events, two handled Identity events, `provideProfileRetention` and `PROFILE_RETENTION_BOUNDS`, and `retention` counts from `runProfileMaintenance`, with migration `0004_retention`; nothing a client relies on changes. It changes one thing a client may rely on: `email_verified` and `phone_number_verified` may now be `true`.
 
 ## 12. HTTP API
 
@@ -279,3 +281,14 @@ Profile reads the current time from the clock the host supplies (`provideProfile
 - Every time Profile keeps or judges comes from the clock: the times it writes (records, keys, erasures, departures, requests, parts, holds, closures, codes, the outbox) and events' `occurredAt`; when a hold, a request's due date or escalation, an access archive, a verification code or its sending window, and a lookup rate-limit window ends; and whether a sign-in is recent enough for the endpoints that need one. The database judges no time of its own: each such time is passed to it from the clock.
 - A clock that throws, or answers anything but a valid `Date`, fails the operation as `unavailable`. Profile never falls back to another time.
 - The clock is trusted like a key: whoever supplies it can end a hold, an archive or a code's life early. Only the host composes it, from server code; no request can set or move it. A clock that can be moved is for tests only.
+
+## 17. End of life
+
+Profile's part of iam-integration's [group deletion](https://github.com/nuxt4-layers/iam-integration/blob/b70beb5158163091a0ce47447fd19c26b3cee1a3/docs/processes/group-deletion.md) and [retention](https://github.com/nuxt4-layers/iam-integration/blob/b70beb5158163091a0ce47447fd19c26b3cee1a3/docs/processes/retention.md) processes.
+
+**A deleted group.** On Identity's `group.deleted` with `disposal: 'due'`, or on `group.disposal-due` once a hold on the group or its tenant has ended (`group.deleted` with `disposal: 'deferred'` is ignored), Profile removes the group's departure records and, once none is left, its pseudonym counter; it keeps the departure of anyone a legal hold on Profile's part covers. A data-subject request naming the group no longer needs its rename: the group's part of it is done. It writes `profile.group-disposed`, which the host relays to Identity as Profile's confirmation.
+
+**Re-homing.** Profile keeps every record in the one store the host composes, whatever the person's home tenant, so `identity.rehomed` needs nothing from it. A host that keeps people's records in different data regions composes one Profile per region, and moving a record between them is the host's migration; Profile does not yet place records by region.
+
+**Retention.** `runProfileMaintenance` also deletes delivered outbox events after `outboxDays` (30, within 7 to 365), completed data-subject requests after `requestDays` (730, within 365 to 2555) unless a legal hold covers the person, and ended legal holds after `endedHoldDays` (365, within 30 to 2555). A host sets them with `provideProfileRetention`, within `PROFILE_RETENTION_BOUNDS`; shorter than a default needs a `riskTreatment` reference. Requests and holds are records the runtime role cannot delete: only the owner's `apply_retention` function deletes them, and it never goes below the hard bounds. A run that deleted anything writes `profile.retention-applied` with counts only.
+

@@ -129,7 +129,7 @@ describe('Attributes', () => {
     expect(contracts.profileEventSchema.safeParse({ ...ids, type: 'profile.request-escalated', data: { requestId, identityId, reasonCode: 'Ada asked twice' } }).success).toBe(false)
     expect(contracts.profileEventSchema.safeParse({ ...ids, type: 'profile.legal-hold-ended', data: { holdId: requestId, identityId, parts: ['profile'], released: ['profile'], identityClosed: true, reasonCode: 'expired' } }).success).toBe(true)
     expect(contracts.profileEventSchema.safeParse({ ...ids, type: 'profile.contact-verified', data: { identityId, attribute: 'email', value: 'ada@example.com' } }).success).toBe(false)
-    expect(contracts.IDENTITY_EVENTS_HANDLED).toEqual(['identity.provisioned', 'membership.ended', 'identity.closed', 'identity.paused', 'group.renamed'])
+    expect(contracts.IDENTITY_EVENTS_HANDLED).toEqual(['identity.provisioned', 'membership.ended', 'identity.closed', 'identity.paused', 'group.renamed', 'group.deleted', 'group.disposal-due'])
   })
 
   it('dates a request a calendar month on, or to the month\'s last day', () => {

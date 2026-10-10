@@ -375,6 +375,46 @@ describe.skipIf(!hasDatabase)('Profile storage on PostgreSQL', () => {
     }
   })
 
+  it('disposes of a deleted group\'s departures when disposal is due, keeping those a legal hold covers', async () => {
+    const doomed = uuidv7()
+    const [kept, gone] = [uuidv7(), uuidv7()]
+    for (const person of [kept, gone]) {
+      await provision(person)
+      await service().update({ subjectId: person, correlationId: correlationId(), changes: { name: 'Someone Leaving' } })
+      await service().applyIdentityEvent(identityEvent('membership.ended', { membershipId: uuidv7(), identityId: person, groupId: doomed, endReason: 'left', reasonCode: null }))
+    }
+    await service().placeHold({ identityId: kept, parts: ['profile'], reasonCode: 'litigation', endsAt: new Date(Date.now() + 86_400_000).toISOString(), correlationId: correlationId() })
+    const departures = async () => (await admin.query('select "identity_id" from "profile"."departure" where "group_id" = $1', [doomed])).rows.map(row => row.identity_id)
+    // Deferred by a hold on the group: nothing yet.
+    expect(await service().applyIdentityEvent(identityEvent('group.deleted', { groupId: doomed, tenantId: uuidv7(), kind: 'standard', disposal: 'deferred', changeId: null }))).toBe('ignored')
+    expect((await departures()).sort()).toEqual([kept, gone].sort())
+    expect(await service().applyIdentityEvent(identityEvent('group.disposal-due', { groupId: doomed, tenantId: uuidv7() }))).toBe('applied')
+    expect(await departures()).toEqual([kept])
+    expect((await outbox()).filter(e => e.type === 'profile.group-disposed').at(-1)).toMatchObject({ data: { groupId: doomed, departures: 1, heldDepartures: 1 } })
+  })
+
+  it('deletes delivered events, old completed requests and old ended holds under retention, never a held person\'s request', async () => {
+    let at = new Date()
+    const timed = () => createService({ pool: runtime, schema: 'profile', keys, disclosure: () => disclosure, now: () => at })
+    await timed().relayOutbox({ limit: 1000, publish: async () => {} })
+    const person = uuidv7()
+    await provision(person)
+    await admin.query(`insert into "profile"."request" ("request_id", "identity_id", "type", "origin", "status", "correlation_id", "opened_at", "due_at", "completed_at")
+      values ($1, $2, 'restriction', 'person', 'completed', $3, now() - interval '900 days', now() - interval '870 days', now() - interval '880 days'),
+             ($4, $5, 'restriction', 'person', 'completed', $3, now() - interval '900 days', now() - interval '870 days', now() - interval '880 days')`,
+    [uuidv7(), person, correlationId(), uuidv7(), ids.ada])
+    await timed().placeHold({ identityId: ids.ada, parts: ['authentication'], reasonCode: 'litigation', endsAt: new Date(Date.now() + 100 * 86_400_000).toISOString(), correlationId: correlationId() })
+    at = new Date(Date.now() + 40 * 86_400_000)
+    const { retention } = await timed().maintain()
+    expect(retention.outboxEvents).toBeGreaterThan(0)
+    expect(retention.requests).toBe(1)
+    const left = await admin.query(`select "identity_id" from "profile"."request" where "completed_at" < now() - interval '800 days'`)
+    expect(left.rows.map(row => row.identity_id)).toEqual([ids.ada])
+    expect((await outbox()).filter(e => e.type === 'profile.retention-applied').at(-1)).toMatchObject({ data: { requests: 1 } })
+    // The runtime role still cannot delete a request itself.
+    await expect(runtime.query(`delete from "profile"."request"`)).rejects.toThrow()
+  })
+
   it('relays the outbox in order, stopping at the first failure and resuming from it', async () => {
     const pending = (await admin.query('select count(*)::int as n from "profile"."outbox" where "published_at" is null')).rows[0].n as number
     const seen: string[] = []
