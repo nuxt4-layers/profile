@@ -176,6 +176,28 @@ create table {{schema}}."contact_verification" (
 );
 `,
   },
+  {
+    // Retention (iam-integration retention). Requests and holds are records
+    // the runtime role never deletes: only this function does, past periods
+    // it refuses to shorten below their hard bounds, and never a completed
+    // request of a person an active hold covers.
+    id: '0004_retention',
+    sql: `
+create function {{schema}}.apply_retention(p_at timestamptz, p_request_days integer, p_hold_days integer)
+returns jsonb language plpgsql volatile security definer set search_path = pg_catalog, pg_temp as $$
+declare n_requests integer; n_holds integer;
+begin
+  delete from {{schema}}."request" r
+    where r."status" = 'completed' and r."completed_at" <= p_at - make_interval(days => greatest(p_request_days, 365))
+      and not exists (select 1 from {{schema}}."legal_hold" h where h."identity_id" = r."identity_id" and h."ended_at" is null and h."ends_at" > p_at);
+  get diagnostics n_requests = row_count;
+  delete from {{schema}}."legal_hold" where "ended_at" is not null and "ended_at" <= p_at - make_interval(days => greatest(p_hold_days, 30));
+  get diagnostics n_holds = row_count;
+  return jsonb_build_object('requests', n_requests, 'legalHolds', n_holds);
+end $$;
+revoke all on function {{schema}}.apply_retention(timestamptz, integer, integer) from public;
+`,
+  },
 ]
 
 const SCHEMA_PATTERN = /^[a-z_][a-z0-9_]{0,62}$/
@@ -225,6 +247,7 @@ export async function runProfileMigrations(pool: PostgresPoolLike, schema: strin
       await client.query(`grant select, insert, update on ${quoted}."request", ${quoted}."legal_hold", ${quoted}."closed_identity" to ${role}`)
       await client.query(`grant select, insert on ${quoted}."erased" to ${role}`)
       await client.query(`grant usage on sequence ${quoted}."outbox_sequence_seq" to ${role}`)
+      await client.query(`grant execute on function ${quoted}.apply_retention(timestamptz, integer, integer) to ${role}`)
     }
     await client.query('commit')
     return applied

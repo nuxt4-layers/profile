@@ -58,6 +58,15 @@ const payloads = {
     identityClosed: z.boolean(),
     reasonCode: reasonCodeSchema,
   }),
+  /**
+   * Profile's part of a group Identity deleted is gone (iam-integration
+   * group deletion): the departure records and pseudonyms kept for it, and
+   * its references in data-subject requests. Identity counts it as
+   * confirmed. Departures of people a legal hold covers are kept.
+   */
+  'profile.group-disposed': z.strictObject({ groupId: id, departures: z.number().int().min(0), heldDepartures: z.number().int().min(0) }),
+  /** One maintenance run's deletions under the retention schedules: counts only. */
+  'profile.retention-applied': z.strictObject({ outboxEvents: z.number().int().min(0), requests: z.number().int().min(0), legalHolds: z.number().int().min(0) }),
 } as const
 
 export type ProfileEventType = keyof typeof payloads
@@ -90,8 +99,9 @@ export const PROFILE_EVENT_PAYLOADS: Readonly<Record<ProfileEventType, z.ZodType
  * departure snapshot when a membership ends, erasure when an identity
  * closes (unless held), and the evidence that completes parts of
  * data-subject requests (`identity.paused` for a restriction,
- * `group.renamed` for a correction). Profile reads pausing and suspension
+ * `group.renamed` for a correction), and the disposal of a deleted group
+ * (`group.deleted` when its disposal is due, or `group.disposal-due`). Profile reads pausing and suspension
  * from the disclosure-context port at each lookup, so it never shows a
  * stale standing.
  */
-export const IDENTITY_EVENTS_HANDLED = Object.freeze(['identity.provisioned', 'membership.ended', 'identity.closed', 'identity.paused', 'group.renamed'] as const)
+export const IDENTITY_EVENTS_HANDLED = Object.freeze(['identity.provisioned', 'membership.ended', 'identity.closed', 'identity.paused', 'group.renamed', 'group.deleted', 'group.disposal-due'] as const)

@@ -6,9 +6,11 @@ import type {
   ProfileKeyWrapper,
   ProfileNotifier,
   ProfileRequestCoordinator,
+  ProfileRetention,
+  ProfileRetentionInput,
   ProfileSubjectResolver,
 } from '../../contracts'
-import { ProfileCompositionError } from '../../contracts'
+import { ProfileCompositionError, resolveProfileRetention } from '../../contracts'
 import { systemProfileClock } from '../internal/clock'
 
 /**
@@ -28,6 +30,7 @@ let requestCoordinator: ProfileRequestCoordinator | null = null
 let accessDecision: ProfileAccessDecision | null = null
 let notifier: ProfileNotifier | null = null
 let clock: ProfileClock | null = null
+let retention: ProfileRetention = resolveProfileRetention()
 
 export function provideProfileDatabase(next: ProfileDatabase): void {
   if (next?.dialect !== 'postgres' || typeof next.pool?.query !== 'function' || typeof next.pool.connect !== 'function') {
@@ -90,6 +93,20 @@ export function provideProfileNotifier(next: ProfileNotifier): void {
  * same clock to every member, or none. Trusted like a key: only the host's
  * server code composes it, and no request can set or move it.
  */
+/**
+ * Optional: how long Profile keeps delivered events, completed requests and
+ * ended legal holds (iam-integration retention), within
+ * `PROFILE_RETENTION_BOUNDS`. Without it, the defaults. Shorter than a
+ * default needs `riskTreatment`; an invalid value fails at composition.
+ */
+export function provideProfileRetention(input: ProfileRetentionInput): void {
+  retention = resolveProfileRetention(input)
+}
+
+export function useProfileRetention(): ProfileRetention {
+  return retention
+}
+
 export function provideProfileClock(next: ProfileClock): void {
   if (typeof next?.now !== 'function') {
     throw new TypeError('provideProfileClock expects an object with a now() function.')
@@ -147,4 +164,5 @@ export function clearProfileComposition(): void {
   accessDecision = null
   notifier = null
   clock = null
+  retention = resolveProfileRetention()
 }

@@ -153,3 +153,42 @@ export function requestDueAt(openedAt: Date, months: number = PROFILE_REQUEST_PO
   due.setUTCDate(Math.min(day, last))
   return due
 }
+
+/**
+ * How long Profile keeps records once their purpose is over (iam-integration
+ * `docs/processes/retention.md`), in days: delivered outbox events,
+ * completed data-subject requests and ended legal holds. A host may set
+ * them within the bounds with `provideProfileRetention`; shorter than the
+ * default needs a `riskTreatment` reference. A request of a person a hold
+ * covers is kept while the hold runs.
+ */
+export const PROFILE_RETENTION_BOUNDS = Object.freeze({
+  outboxDays: { default: 30, min: 7, max: 365 },
+  requestDays: { default: 730, min: 365, max: 2555 },
+  endedHoldDays: { default: 365, min: 30, max: 2555 },
+} as const)
+
+export type ProfileRetentionSetting = keyof typeof PROFILE_RETENTION_BOUNDS
+export type ProfileRetention = Readonly<Record<ProfileRetentionSetting, number>>
+
+export const profileRetentionInputSchema = z.strictObject({
+  outboxDays: z.number().int().min(PROFILE_RETENTION_BOUNDS.outboxDays.min).max(PROFILE_RETENTION_BOUNDS.outboxDays.max).optional(),
+  requestDays: z.number().int().min(PROFILE_RETENTION_BOUNDS.requestDays.min).max(PROFILE_RETENTION_BOUNDS.requestDays.max).optional(),
+  endedHoldDays: z.number().int().min(PROFILE_RETENTION_BOUNDS.endedHoldDays.min).max(PROFILE_RETENTION_BOUNDS.endedHoldDays.max).optional(),
+  riskTreatment: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/#-]{0,63}$/).nullable().optional(),
+})
+
+export type ProfileRetentionInput = z.input<typeof profileRetentionInputSchema>
+
+/** The defaults with the host's values over them; refuses values out of bounds, and shortening without a risk treatment. */
+export function resolveProfileRetention(input: ProfileRetentionInput = {}): ProfileRetention {
+  const { riskTreatment, ...values } = profileRetentionInputSchema.parse(input)
+  const resolved = Object.fromEntries((Object.keys(PROFILE_RETENTION_BOUNDS) as ProfileRetentionSetting[])
+    .map(key => [key, values[key] ?? PROFILE_RETENTION_BOUNDS[key].default])) as Record<ProfileRetentionSetting, number>
+  for (const key of Object.keys(resolved) as ProfileRetentionSetting[]) {
+    if (resolved[key] < PROFILE_RETENTION_BOUNDS[key].default && !riskTreatment) {
+      throw new TypeError(`Profile retention: ${key} below its default needs a riskTreatment reference.`)
+    }
+  }
+  return Object.freeze(resolved)
+}

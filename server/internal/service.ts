@@ -25,6 +25,7 @@ import type {
   RequestPart,
   RequestView,
   VerifiableAttribute,
+  ProfileRetention,
 } from '../../contracts'
 import {
   chosenDisplayName,
@@ -59,6 +60,7 @@ import {
   profileChangesSchema,
   ProfileFailure,
   IDENTITY_EVENTS_HANDLED,
+  resolveProfileRetention,
   reasonCodeSchema,
   VERIFICATION_CLAIMS,
 } from '../../contracts'
@@ -89,6 +91,8 @@ export interface ServiceDependencies {
   notifier?: () => ProfileNotifier
   /** The host's clock (or the system clock); every time Profile keeps or judges comes from it. */
   now?: () => Date
+  /** The retention periods (iam-integration retention); the defaults without them. */
+  retention?: () => ProfileRetention
 }
 
 /** A port the host has not supplied fails closed. */
@@ -128,7 +132,7 @@ function parse<T>(run: () => T): T {
   }
 }
 
-export function createService({ pool, schema, keys, disclosure, coordinator = () => missing('ProfileRequestCoordinator'), accessDecision = () => missing('ProfileAccessDecision'), notifier = () => missing('ProfileNotifier'), now: clockNow = () => new Date() }: ServiceDependencies) {
+export function createService({ pool, schema, keys, disclosure, coordinator = () => missing('ProfileRequestCoordinator'), accessDecision = () => missing('ProfileAccessDecision'), notifier = () => missing('ProfileNotifier'), now: clockNow = () => new Date(), retention = () => resolveProfileRetention() }: ServiceDependencies) {
   const s = quoteSchema(schema)
   /** The clock's time; an invalid answer fails closed as `unavailable`. */
   const clock = { now: clockNow }
@@ -492,6 +496,50 @@ export function createService({ pool, schema, keys, disclosure, coordinator = ()
     return new Set(rows.map(row => row.part))
   }
 
+  /**
+   * Profile's part of a group Identity deleted (iam-integration group
+   * deletion): its departure records and pseudonyms, except those of people
+   * a legal hold on Profile's part covers, and its references in
+   * data-subject requests, which a deleted group's name no longer needs
+   * (the correction is done). Announced as `profile.group-disposed`.
+   */
+  async function disposeGroup(client: Client, groupId: string, correlationId: string): Promise<void> {
+    const at = now().toISOString()
+    const { rows: renamed } = await client.query(
+      `update ${s}."request_group" g set "renamed_at" = $2 from ${s}."request" r
+       where r."request_id" = g."request_id" and g."group_id" = $1 and g."renamed_at" is null and r."status" = 'open'
+       returning r."identity_id"`,
+      [groupId, at],
+    )
+    for (const person of new Set(renamed.map(row => row.identity_id as string))) await settleIdentityParts(client, person)
+    await client.query(`delete from ${s}."request_group" g using ${s}."request" r where r."request_id" = g."request_id" and g."group_id" = $1 and r."status" = 'completed'`, [groupId])
+    const held = `exists (select 1 from ${s}."legal_hold" h where h."identity_id" = d."identity_id" and h."ended_at" is null and h."ends_at" > $2 and 'profile' = any (h."parts"))`
+    const { rows: gone } = await client.query(`delete from ${s}."departure" d where d."group_id" = $1 and not ${held} returning 1`, [groupId, at])
+    const { rows: kept } = await client.query(`select count(*)::int as "n" from ${s}."departure" d where d."group_id" = $1`, [groupId])
+    if (Number(kept[0]?.n ?? 0) === 0) await client.query(`delete from ${s}."pseudonym_counter" where "group_id" = $1`, [groupId])
+    await emit(client, event('profile.group-disposed', { groupId, departures: gone.length, heldDepartures: Number(kept[0]?.n ?? 0) }, correlationId))
+  }
+
+  /**
+   * Retention (iam-integration retention): delivered events, completed
+   * requests (with their parts and group references) and ended legal holds
+   * past their periods. A completed request of a person an active hold
+   * covers is kept. Announced only when something was deleted, with counts.
+   */
+  async function applyRetention(at: Date): Promise<{ outboxEvents: number, requests: number, legalHolds: number }> {
+    const periods = retention()
+    const before = (days: number) => new Date(at.getTime() - days * DAY_MS).toISOString()
+    return transaction(async (client) => {
+      const outbox = await client.query(`delete from ${s}."outbox" where "published_at" is not null and "published_at" <= $1 returning 1`, [before(periods.outboxDays)])
+      // Requests and holds through the owner's function, which holds the floors and the hold rule itself.
+      const { rows } = await client.query(`select ${s}.apply_retention($1, $2, $3) as "result"`, [at.toISOString(), periods.requestDays, periods.endedHoldDays])
+      const records = rows[0]?.result as { requests: number, legalHolds: number }
+      const counts = { outboxEvents: outbox.rows.length, requests: records.requests, legalHolds: records.legalHolds }
+      if (counts.outboxEvents + counts.requests + counts.legalHolds > 0) await emit(client, event('profile.retention-applied', counts, uuidv7(at.getTime())))
+      return counts
+    })
+  }
+
   async function isClosed(client: Client, identityId: string): Promise<boolean> {
     const { rows } = await client.query(`select 1 from ${s}."closed_identity" where "identity_id" = $1`, [identityId])
     return rows.length > 0
@@ -833,8 +881,11 @@ export function createService({ pool, schema, keys, disclosure, coordinator = ()
       const eventId = parse(() => identifierSchema.parse(identityEvent.eventId))
       const correlationId = parse(() => correlationIdSchema.parse(identityEvent.correlationId))
       const data = identityEvent.data ?? {}
-      const identityId = type === 'group.renamed' ? null : parse(() => identifierSchema.parse(data.identityId))
-      const groupId = type === 'group.renamed' || type === 'membership.ended' ? parse(() => identifierSchema.parse(data.groupId)) : null
+      const groupEvent = type === 'group.renamed' || type === 'group.deleted' || type === 'group.disposal-due'
+      // A deleted group's disposal waits while a hold defers it: `group.disposal-due` follows.
+      if (type === 'group.deleted' && data.disposal !== 'due') return 'ignored'
+      const identityId = groupEvent ? null : parse(() => identifierSchema.parse(data.identityId))
+      const groupId = groupEvent || type === 'membership.ended' ? parse(() => identifierSchema.parse(data.groupId)) : null
       return transaction(async (client) => {
         const fresh = await client.query(`insert into ${s}."processed_event" ("event_id", "processed_at") values ($1, $2) on conflict do nothing returning 1`, [eventId, now().toISOString()])
         if (fresh.rows.length === 0) return 'duplicate'
@@ -864,6 +915,10 @@ export function createService({ pool, schema, keys, disclosure, coordinator = ()
             for (const person of new Set(rows.map(row => row.identity_id as string))) await settleIdentityParts(client, person)
             break
           }
+          case 'group.deleted':
+          case 'group.disposal-due':
+            await disposeGroup(client, groupId!, correlationId)
+            break
         }
         return 'applied'
       })
@@ -1129,7 +1184,7 @@ export function createService({ pool, schema, keys, disclosure, coordinator = ()
      * and group renames overdue at half the deadline; retries access parts a
      * member failed; drops expired verification codes. Returns the counts.
      */
-    async maintain(): Promise<{ holdsEnded: number, archivesDeleted: number, escalated: number, accessRetried: number, codesExpired: number }> {
+    async maintain(): Promise<{ holdsEnded: number, archivesDeleted: number, escalated: number, accessRetried: number, codesExpired: number, retention: { outboxEvents: number, requests: number, legalHolds: number } }> {
       const at = now()
       const atIso = at.toISOString()
       const expiredHolds = await poolRead(() => pool.query(
@@ -1183,7 +1238,8 @@ export function createService({ pool, schema, keys, disclosure, coordinator = ()
         )
         return rows.length
       })
-      return { holdsEnded, archivesDeleted, escalated, accessRetried: open.rows.length, codesExpired }
+      const retained = await applyRetention(at)
+      return { holdsEnded, archivesDeleted, escalated, accessRetried: open.rows.length, codesExpired, retention: retained }
     },
 
     // -----------------------------------------------------------------------
