@@ -244,7 +244,7 @@ It renders "Member" on the server and until the answer arrives, and whenever Pro
 
 ## 14. Data-subject requests and legal holds
 
-Profile is the person's single point of contact for requests about their data ([iam-integration's process](https://github.com/nuxt4-layers/iam-integration/blob/a3a414350c951bd2fba7acbb893962e4a62ae81d/docs/processes/data-subject-requests.md)). It records each request and each member's part, and keeps legal holds; each member answers for what it holds.
+Profile is the person's single point of contact for requests about their data ([iam-integration's process](https://github.com/nuxt4-layers/iam-integration/blob/91907176035bef4465cfe89c71b2dcd9353d2cc7/docs/processes/data-subject-requests.md)). It records each request and each member's part, and keeps legal holds; each member answers for what it holds.
 
 | Type | Who opens it | Parts by default | What happens |
 |---|---|---|---|
