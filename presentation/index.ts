@@ -9,4 +9,5 @@
 
 export type { ProfileMessageKey, ProfileMessages } from './messages'
 export { formatMessage, PROFILE_MESSAGES_EN_GB, resolveMessage } from './messages'
-export { DELIBERATE_PAIRINGS, profileClasses } from './utils/profile-classes'
+export { DELIBERATE_PAIRINGS } from './pairings'
+export { profileClasses } from './utils/profile-classes'

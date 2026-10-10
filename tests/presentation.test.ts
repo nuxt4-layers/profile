@@ -11,7 +11,8 @@ import {
   attributeSchemas,
 } from '../contracts'
 import { PROFILE_MESSAGES_EN_GB, resolveMessage } from '../presentation/messages'
-import { DELIBERATE_PAIRINGS, profileClasses } from '../presentation/utils/profile-classes'
+import { DELIBERATE_PAIRINGS } from '../presentation/pairings'
+import { profileClasses } from '../presentation/utils/profile-classes'
 
 /**
  * Theme Manager's Semantic Presentation Guide: Fill, Pen and Edge of one
