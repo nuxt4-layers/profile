@@ -4,7 +4,7 @@ Nuxt 4 foundation layer for the personal data that describes a person: what is h
 
 Part of the `nuxt4-layers` Identity and Access Management (IAM) suite, with [`authentication`](https://github.com/nuxt4-layers/authentication), `identity`, [`authorisation`](https://github.com/nuxt4-layers/authorisation) and [`iam-integration`](https://github.com/nuxt4-layers/iam-integration).
 
-**Status:** phase 3 of 5: the contract, encrypted PostgreSQL storage, disclosure rules, the departure data policy, Identity's events, erasure, export and key rotation, the `/api/profile/*` endpoints with `useProfile()`, and accessible default pages with `ProfilePersonName`. Requests and verification follow (see [docs/roadmap.md](docs/roadmap.md)).
+**Status:** 1.0.0. Contract version 1 is frozen for 1.x; see [CHANGELOG.md](CHANGELOG.md) and the [roadmap](docs/roadmap.md).
 
 ## Owns
 
