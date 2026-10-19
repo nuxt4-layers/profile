@@ -32,4 +32,5 @@ Nuxt 4 foundation layer for the personal data that describes a person (what is h
 - Required ports fail closed. No implicit in-memory store and no default key.
 - Defaults are secure; loosening a default needs a documented risk treatment.
 - Keep `docs/contracts.md`, `docs/threat-model.md` (control register) and `docs/roadmap.md` in step with code. Link to other `nuxt4-layers` documents pinned to a commit.
+- Platform-agnostic: the layer and its tests run alike on Windows, macOS and Linux. Tests that compare file paths with import specifiers or routes pass them through `toPosix` (`tests/support/paths.ts`) first: Node's path functions answer with `\` on Windows.
 - Package manager: pnpm. Commit `pnpm-lock.yaml`.
