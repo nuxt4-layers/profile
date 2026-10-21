@@ -198,6 +198,14 @@ end $$;
 revoke all on function {{schema}}.apply_retention(timestamptz, integer, integer) from public;
 `,
   },
+  {
+    // The configuration layer's account settings join access requests (docs/contracts.md §14).
+    id: '0005_configuration_part',
+    sql: `
+alter table {{schema}}."request_part" drop constraint "request_part_part_check",
+  add constraint "request_part_part_check" check ("part" in ('profile', 'identity', 'authentication', 'authorisation', 'configuration'));
+`,
+  },
 ]
 
 const SCHEMA_PATTERN = /^[a-z_][a-z0-9_]{0,62}$/

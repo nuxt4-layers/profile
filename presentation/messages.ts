@@ -146,6 +146,7 @@ export const PROFILE_MESSAGES_EN_GB = {
   'profile.requests.part.identity': 'Your groups and memberships',
   'profile.requests.part.authentication': 'How you sign in',
   'profile.requests.part.authorisation': 'What you may do',
+  'profile.requests.part.configuration': 'Your account settings',
   'profile.requests.partStatus.pending': 'In progress',
   'profile.requests.partStatus.done': 'Done',
   'profile.requests.partStatus.exempt': 'Refused, with a legal reason',

@@ -19,12 +19,16 @@ export const PERSON_REQUEST_TYPES = ['access', 'restriction'] as const satisfies
 export const REQUEST_ORIGINS = ['person', 'operator'] as const
 export type RequestOrigin = typeof REQUEST_ORIGINS[number]
 
-/** Each member's part of a request. Profile's own is `profile`. */
-export const REQUEST_PARTS = ['profile', 'identity', 'authentication', 'authorisation'] as const
+/**
+ * Each member's part of a request. Profile's own is `profile`;
+ * `configuration` is the configuration layer's account settings, which it
+ * holds for the person beside the IAM suite.
+ */
+export const REQUEST_PARTS = ['profile', 'identity', 'authentication', 'authorisation', 'configuration'] as const
 export type RequestPart = typeof REQUEST_PARTS[number]
 
 /** The other members' parts, which the host's coordination port answers for. */
-export const COORDINATED_PARTS = ['identity', 'authentication', 'authorisation'] as const satisfies readonly RequestPart[]
+export const COORDINATED_PARTS = ['identity', 'authentication', 'authorisation', 'configuration'] as const satisfies readonly RequestPart[]
 export type CoordinatedPart = typeof COORDINATED_PARTS[number]
 
 /**
@@ -39,9 +43,13 @@ export type PartStatus = typeof PART_STATUSES[number]
 export const REQUEST_STATUSES = ['open', 'completed'] as const
 export type RequestStatus = typeof REQUEST_STATUSES[number]
 
-/** The parts each type of request involves by default. */
+/**
+ * The parts each type of request involves by default. Erasure leaves out
+ * `configuration`: the configuration layer deletes an account's settings
+ * itself on `identity.closed`.
+ */
 export const DEFAULT_REQUEST_PARTS: Readonly<Record<RequestType, readonly RequestPart[]>> = Object.freeze({
-  access: ['profile', 'identity', 'authentication', 'authorisation'],
+  access: ['profile', 'identity', 'authentication', 'authorisation', 'configuration'],
   correction: ['profile'],
   erasure: ['profile', 'identity', 'authentication', 'authorisation'],
   restriction: ['profile'],
