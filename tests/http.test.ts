@@ -283,11 +283,11 @@ describe.skipIf(!hasDatabase)('the /api/profile endpoints', () => {
 
     const opened = await call('POST', '/api/profile/me/requests', { as: me, body: { type: 'access' } })
     expect(opened).toMatchObject({ status: 201, data: { type: 'access', origin: 'person', status: 'completed' } })
-    expect(opened.data.parts.map((part: { part: string, status: string }) => `${part.part}:${part.status}`)).toEqual(['profile:done', 'identity:done', 'authentication:done', 'authorisation:done'])
+    expect(opened.data.parts.map((part: { part: string, status: string }) => `${part.part}:${part.status}`)).toEqual(['profile:done', 'identity:done', 'authentication:done', 'authorisation:done', 'configuration:done'])
     const { requestId } = opened.data
 
     const archive = await call('GET', `/api/profile/me/requests/${requestId}/archive`, { as: me })
-    expect(archive).toMatchObject({ status: 200, data: { requestId, subjectId: me, parts: { profile: { attributes: { name: 'Ada Lovelace' } }, identity: { member: 'identity', identityId: me }, authorisation: null } } })
+    expect(archive).toMatchObject({ status: 200, data: { requestId, subjectId: me, parts: { profile: { attributes: { name: 'Ada Lovelace' } }, identity: { member: 'identity', identityId: me }, authorisation: null, configuration: { member: 'configuration', identityId: me } } } })
     expect(archive.headers.get('cache-control')).toBe('no-store')
     expect(await call('GET', `/api/profile/me/requests/${requestId}/archive`, { as: me, ageSeconds: 20 * 60 })).toMatchObject({ status: 403, data: { code: 'insufficient-assurance' } })
     expect(await call('GET', `/api/profile/me/requests/${requestId}/archive`, { as: await person() })).toMatchObject({ status: 403, data: { code: 'forbidden' } })

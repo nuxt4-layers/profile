@@ -251,10 +251,12 @@ Profile is the person's single point of contact for requests about their data ([
 
 | Type | Who opens it | Parts by default | What happens |
 |---|---|---|---|
-| `access` | The person (recent sign-in) or an operator | `profile`, `identity`, `authentication`, `authorisation` | Profile's own part, then each other member's through the coordination port, one at a time; each bundle sealed with the person's key. Complete when every part is answered; the archive is downloadable by the person for 7 days, then deleted |
+| `access` | The person (recent sign-in) or an operator | `profile`, `identity`, `authentication`, `authorisation`, `configuration` | Profile's own part, then each other member's through the coordination port, one at a time; each bundle sealed with the person's key. Complete when every part is answered; the archive is downloadable by the person for 7 days, then deleted |
 | `restriction` | The person (recent sign-in) or an operator | `profile` (and `identity` if named) | Every audience becomes `nobody` at once; Identity's part is done on `identity.paused` |
 | `correction` | An operator | `profile` (and `identity` with `groupIds`) | Identity's part is done when every group named is renamed (`group.renamed`); raised to operators at half the deadline |
 | `erasure` | An operator (the person closes their account) | `profile`, `identity`, `authentication`, `authorisation` | Done as closure completes: Identity's on `identity.closed` (and any renames), Profile's on its erasure, the others as the host's handler reports them (`recordProfileRequestPart`) |
+
+The `configuration` part is the configuration layer's settings for the person's own account, which it holds beside the IAM suite; the coordination port answers it like a member's, and `null` when the host composes no configuration layer. Erasure leaves it out: the configuration layer deletes an account's settings itself on `identity.closed`.
 
 A part is `pending`, `done`, `exempt` (with a reason code) or `held`; a request completes once every part is `done` or `exempt`. It is due one calendar month after opening (`PROFILE_REQUEST_POLICY`), and raised to operators (`profile.request-escalated`) 7 days before. Requests outlive an erasure, as identifiers, codes and times only.
 
